@@ -1,0 +1,10 @@
+[package]
+name = "curvefever"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+curvefever_derive = { path = "curvefever_derive" }
+egui = "0.22.0"
+eframe = "0.22.0"
+rand = "0.8.5"
