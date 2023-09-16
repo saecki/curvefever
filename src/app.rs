@@ -1,68 +1,115 @@
 use std::time::Instant;
 
 use eframe::CreationContext;
-use egui::{CentralPanel, Frame, Color32, Pos2, Key, Direction, Context, Rect, Rounding, Stroke, Vec2};
+use egui::{CentralPanel, Frame, Color32, Pos2, Key, Direction, Context, Rect, Rounding, Stroke, Vec2, Painter};
+
+use crate::world::{WORLD_SIZE, Player, TrailSection};
 
 pub struct CurvefeverApp {
     world: World,
+    menu: Menu,
+}
+
+struct Menu {
+    state: MenuState,
+}
+
+impl Menu {
+    pub fn new() -> Self {
+        Self {
+            state: MenuState::Normal,
+        }
+    }
+}
+
+enum MenuState {
+    Normal,
+    Player(PlayerMenu),
+}
+
+struct PlayerMenu {
+    player_index: usize,
+    field_index: usize,
+    selection_active: bool,
 }
 
 impl CurvefeverApp {
     pub fn new(cc: &CreationContext) -> Self {
-        Self { world: World::new() }
+        Self { world: World::new(), menu: Menu::new() }
     }
 }
 
 impl eframe::App for CurveFeverApp {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        ctx.request_repaint();
+
         world::update(&mut self.world);
 
         CentralPanel::default().frame(Frame::none().fill(Color32::from_gray(50))).show(ctx, |ui| {
             let painter = ui.painter();
 
-            let size = ui.available_size();
-            let scale = 
+            let screen_size = ui.available_size();
+            let scale = screen_size / WORLD_SIZE;
+            let scale_factor = scale.min_elem();
 
             if world.wallTeleporting() {
-                noFill();
-                stroke(0f, 200f, 0f)
-                strokeWeight(2f)
                 let rect = Rect::from_min_size(Pos2::ZERO, size);
-                let stroke = Stroke::new(, Color32::from_rgb(0, 200, 0));
-                painter.rect(rect, Rounding::none(), , )
-                rect(1f, 1f, width.toFloat() - 3f, height.toFloat() - 3f)
+                let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
+                painter.rect(rect, Rounding::none(), Color32::TRANSPARENT, stroke);
             }
             for i in world.items.iter() {
-                drawItem(it)
+                draw_item(ui, p);
             }
             for p in world.players.iter() { 
-                drawPlayer(it) 
+                draw_player(ui, p);
+            }
+
+            if matches!(self.world.state, GameState::Paused | GameState::Stopped) {
+                match &mut self.menu.state {
+                    MenuState::Normal => {
+                        // TODO
+                    }
+                    MenuState::Player(player_menu) => {
+                        // TODO
+                    }
+                }
+            }
+
+            if !matches!(self.menu.state, MenuState::Player(_)) {
+                // TODO: draw hud
             }
         });
+    }
+
+    fn draw_player(&self, painter: &mut Painter, player: &Player) {
+        if player.crashed {
+            return;
+        }
+
+        for s in player.trail.iter() {
+            match s {
+                TrailSection::Straight(s) => {
+                    let mut stroke = Stroke::new(s.thickness, player.color.color32());
+                    painter.line_segment([s.start, s.end], stroke);
+                }
+                TrailSection::Arc(s) => {
+
+                }
+            }
+        }
+
+        if (player.gap || player.trail.isEmpty()) {
+            let alpha = if player.gap { 180.0 } else { 255.0 };
+            painter.circle(player.pos, 0.5 * player.thickness(), player.color.color32(), Stroke::NONE);
+        }
+
+        if (world.state == World.State.STARTING) {
+            drawPlayerDirectionArrow(player)
+        }
     }
 }
 
 class Curvefever() : PApplet() {
-    private val menu: Boolean
-        get() = world.state == World.State.STOPPED || world.state == World.State.PAUSED
-
-    private val selectionFields = 3
-
-    private var playerMenu = false
-    private var selectedPlayerIndex = 0
-    private var selectedPlayerField = 0
-    private var selectionActive = false
-
-    override fun setup() {
-        surface.setResizable(true)
-
-        frameRate(240f)
-
-        update()
-        world.init()
-        background(50)
-    }
-
     override fun draw() {
         update()
         world.update()
@@ -350,8 +397,4 @@ class Curvefever() : PApplet() {
             world.players[selectedPlayerIndex].color = world.nextColor(selectedPlayerIndex)
         }
     }
-
-    private fun setFill(color: Color, alpha: Float = 255f) = fill(color.r, color.g, color.b, alpha)
-
-    private fun setStroke(color: Color) = stroke(color.r, color.g, color.b)
 }

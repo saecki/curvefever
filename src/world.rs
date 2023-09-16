@@ -1,4 +1,4 @@
-use std::f32::consts::{TAU, FRAC_PI_2, PI};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::time::{Duration, SystemTime};
 
 use egui::{Color32, Key, Pos2, Vec2};
@@ -12,9 +12,14 @@ pub const MIN_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
 pub const MIN_ITEM_DIST: f32 = 120.0;
 pub const ITEM_SPAWN_RATE: f32 = 0.002;
+pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
 pub const MAX_ITEMS: usize = 5;
 
+pub const PLAYER_EFFECT_DURATION: Duration = Duration::from_secs(5);
+pub const PLAYER_EFFECT_DEVIATION_DURATION: Duration = Duration::from_secs(1);
+pub const WORLD_EFFECT_DURATION: Duration = Duration::from_secs(10);
+pub const WORLD_EFFECT_DEVIATION_DURATION: Duration = Duration::from_secs(3);
 pub const BASE_SPEED: f32 = 50.0;
 pub const MIN_SPEED: f32 = 25.0;
 pub const BASE_THICKNESS: f32 = 4.0;
@@ -53,7 +58,9 @@ impl World {
     }
 
     fn wall_teleporting(&self) -> bool {
-        self.effects.iter().any(|e| e.kind == WorldEffect::WallTeleporting)
+        self.effects
+            .iter()
+            .any(|e| e.kind == WorldEffect::WallTeleporting)
     }
 }
 
@@ -101,7 +108,6 @@ pub struct Item {
 
 #[derive(EnumMembersArray)]
 pub enum ItemKind {
-    Gap,
     Speedup,
     Slowdown,
     FastTurning,
@@ -112,13 +118,14 @@ pub enum ItemKind {
     Clear,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Effect<T> {
     start: SystemTime,
     duration: Duration,
     kind: T,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum PlayerEffect {
     Size(f32),
     Speed(f32),
@@ -131,20 +138,21 @@ pub enum WorldEffect {
     WallTeleporting,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Player {
-    name: String,
-    trail: Vec<TrailSection>,
-    pos: Pos2,
-    angle: f32,
-    color: Color,
+    pub name: String,
+    pub trail: Vec<TrailSection>,
+    pub pos: Pos2,
+    pub angle: f32,
+    pub color: Color,
     effects: Vec<Effect<PlayerEffect>>,
-    left_key: Key,
-    right_key: Key,
-    left_down: bool,
-    right_down: bool,
+    pub left_key: Key,
+    pub right_key: Key,
+    pub left_down: bool,
+    pub right_down: bool,
     direction: Direction,
     just_crashed: bool,
-    crashed: bool,
+    pub crashed: bool,
     score: u16,
 }
 
@@ -169,6 +177,7 @@ impl Player {
             right_down: false,
             effects: Vec::new(),
             direction: Direction::Straight,
+            just_crashed: false,
             crashed: false,
             score: 0,
         }
@@ -210,7 +219,7 @@ impl Player {
         speed.max(MIN_SPEED)
     }
 
-    fn thickness(&self) -> f32 {
+    pub fn thickness(&self) -> f32 {
         let thickness = BASE_THICKNESS
             + self
                 .effects
@@ -237,7 +246,7 @@ impl Player {
     }
 }
 
-#[derive(EnumMembersArray)]
+#[derive(Debug, PartialEq, Eq, EnumMembersArray)]
 pub enum Color {
     Color0 = 0,
     Color1 = 1,
@@ -250,7 +259,7 @@ pub enum Color {
 }
 
 impl Color {
-    fn color32(&self) -> Color32 {
+    pub fn color32(&self) -> Color32 {
         match self {
             Self::Color0 => Color32::from_rgb(230, 100, 20),
             Self::Color1 => Color32::from_rgb(50, 230, 20),
@@ -264,7 +273,7 @@ impl Color {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Direction {
     Straight,
     Right,
@@ -281,7 +290,7 @@ impl Direction {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum TurnDirection {
     Right,
     Left,
@@ -296,6 +305,7 @@ impl TurnDirection {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum TrailSection {
     Straight(StraightTrailSection),
     Arc(ArcTrailSection),
@@ -325,8 +335,23 @@ impl TrailSection {
             TrailSection::Arc(s) => s.thickness,
         }
     }
+
+    fn start_pos(&self) -> Pos2 {
+        match self {
+            TrailSection::Straight(s) => s.start,
+            TrailSection::Arc(s) => s.start_pos,
+        }
+    }
+
+    fn end_pos(&self) -> Pos2 {
+        match self {
+            TrailSection::Straight(s) => s.end,
+            TrailSection::Arc(s) => s.end_pos(),
+        }
+    }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct StraightTrailSection {
     pub start: Pos2,
     pub gap: bool,
@@ -345,8 +370,9 @@ impl StraightTrailSection {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct ArcTrailSection {
-    pub start: Pos2,
+    pub start_pos: Pos2,
     pub gap: bool,
     pub thickness: f32,
     pub dir: TurnDirection,
@@ -357,7 +383,7 @@ pub struct ArcTrailSection {
 
 impl ArcTrailSection {
     pub fn new(
-        start: Pos2,
+        start_pos: Pos2,
         gap: bool,
         thickness: f32,
         dir: TurnDirection,
@@ -366,7 +392,7 @@ impl ArcTrailSection {
         end_angle: f32,
     ) -> Self {
         Self {
-            start,
+            start_pos,
             gap,
             thickness,
             dir,
@@ -378,15 +404,15 @@ impl ArcTrailSection {
 
     pub fn end_pos(&self) -> Pos2 {
         Pos2 {
-            x: self.start.x + (self.end_angle.cos() - self.start_angle.cos()) * self.radius,
-            y: self.start.y + (self.end_angle.sin() - self.start_angle.sin()) * self.radius,
+            x: self.start_pos.x + (self.end_angle.cos() - self.start_angle.cos()) * self.radius,
+            y: self.start_pos.y + (self.end_angle.sin() - self.start_angle.sin()) * self.radius,
         }
     }
 
     pub fn center_pos(&self) -> Pos2 {
         Pos2 {
-            x: self.start.x - self.start_angle.cos() * self.radius,
-            y: self.start.y - self.start_angle.sin() * self.radius,
+            x: self.start_pos.x - self.start_angle.cos() * self.radius,
+            y: self.start_pos.y - self.start_angle.sin() * self.radius,
         }
     }
 }
@@ -420,7 +446,9 @@ impl World {
                 }
 
                 for p in self.players.iter_mut() {
-                    if p.crashed { continue; }
+                    if p.crashed {
+                        continue;
+                    }
 
                     // remove effects
                     p.effects.retain(|e| e.start + e.duration > self.clock.now);
@@ -428,7 +456,9 @@ impl World {
                     move_player(&self.clock, p);
                 }
                 for p in self.players.iter_mut() {
-                    if p.crashed { continue; }
+                    if p.crashed {
+                        continue;
+                    }
 
                     // check for crash
                     if self.wall_teleporting() {
@@ -449,35 +479,91 @@ impl World {
                         }
                     } else {
                         let thickness = p.thickness();
-                        if p.pos.x < 0.5 * thickness || p.pos.x > WORLD_SIZE.x - 0.5 * thickness
-                            || p.pos.y < 0.5 * thickness || p.pos.y > WORLD_SIZE.y - 0.5 * thickness
-                         {
-                             p.just_crashed = true;
-                            // TODO: world.crashed(this, WALL_CRASH_MESSAGE)
+                        if p.pos.x < 0.5 * thickness
+                            || p.pos.x > WORLD_SIZE.x - 0.5 * thickness
+                            || p.pos.y < 0.5 * thickness
+                            || p.pos.y > WORLD_SIZE.y - 0.5 * thickness
+                        {
+                            p.just_crashed = true;
                         }
                     }
 
                     if !p.gap() {
-                        if p.intersects_with_own_trail() {
-                            world.crashed(this, SELF_CRASH_MESSAGE)
+                        if intersects_with_own_trail(p) {
+                            p.just_crashed = true;
                         }
 
-                        val others = world.players.filter { it != this }
-                        for (p in others) {
-                            if (p.intersectsWith(this.x, this.y, this.thickness / 2)) {
-                                world.crashed(this, PLAYER_CRASH_MESSAGE + p.name)
-                                break
+                        let others = self.players.iter().filter(|it| *it != p);
+                        for o in others {
+                            if intersects_with_trail(p.pos, 0.5 * p.thickness(), &o.trail) {
+                                p.just_crashed = true;
+                                break;
                             }
                         }
                     }
 
-
                     // collect items
+                    let mut i = 0;
+                    let mut clear_trails = false;
+                    'outer: while i < self.items.len() {
+                        let item = &self.items[i];
+                        for p in self.players.iter() {
+                            let dist = 0.5 * p.thickness() + ITEM_RADIUS;
+                            if intersects(p.pos, item.pos, dist) {
+                                match item.kind {
+                                    ItemKind::Speedup => {
+                                        p.effects
+                                            .push(self.player_effect(PlayerEffect::Speed(50.0)));
+                                    }
+                                    ItemKind::Slowdown => {
+                                        p.effects
+                                            .push(self.player_effect(PlayerEffect::Speed(-50.0)));
+                                    }
+                                    ItemKind::FastTurning => {
+                                        p.effects
+                                            .push(self.player_effect(PlayerEffect::Turning(20.0)));
+                                    }
+                                    ItemKind::SlowTurning => {
+                                        p.effects
+                                            .push(self.player_effect(PlayerEffect::Turning(-20.0)));
+                                    }
+                                    ItemKind::Expand => {
+                                        p.effects.push(self.player_effect(PlayerEffect::Size(4.0)));
+                                    }
+                                    ItemKind::Shrink => {
+                                        p.effects
+                                            .push(self.player_effect(PlayerEffect::Size(-2.0)));
+                                    }
+                                    ItemKind::WallTeleporting => {
+                                        self.effects
+                                            .push(self.world_effect(WorldEffect::WallTeleporting));
+                                    }
+                                    ItemKind::Clear => clear_trails = true,
+                                }
+
+                                self.items.remove(i);
+                                continue 'outer;
+                            }
+                        }
+                        i += 1;
+                    }
+
+                    if clear_trails {
+                        for p in self.players.iter_mut() {
+                            p.trail.clear();
+                        }
+                    }
                 }
+                let mut num_alive_players = 0;
                 for p in self.players.iter() {
                     if p.just_crashed {
                         p.crashed = true;
+                    } else {
+                        num_alive_players += 1;
                     }
+                }
+                if num_alive_players < 2 {
+                    self.state = GameState::Stopped;
                 }
             }
             GameState::Paused => (),
@@ -505,6 +591,26 @@ impl World {
                 p.reset(pos);
                 new_players.push(p);
             }
+        }
+    }
+
+    fn player_effect(&self, kind: PlayerEffect) -> Effect<PlayerEffect> {
+        let mut rng = rand::thread_rng();
+        Effect {
+            start: self.clock.now,
+            duration: PLAYER_EFFECT_DURATION
+                + rng.gen_range(0..=1) * PLAYER_EFFECT_DEVIATION_DURATION,
+            kind,
+        }
+    }
+
+    fn world_effect(&self, kind: WorldEffect) -> Effect<WorldEffect> {
+        let mut rng = rand::thread_rng();
+        Effect {
+            start: self.clock.now,
+            duration: WORLD_EFFECT_DURATION
+                + rng.gen_range(0..=1) * WORLD_EFFECT_DEVIATION_DURATION,
+            kind,
         }
     }
 }
@@ -636,23 +742,58 @@ fn gen_item_position(players: &[Player], items: &[Item]) -> Pos2 {
     pos
 }
 
-fn intersects_with_trail(pos: Pos2, dist: f32, trail: &[TrailSection]) -> bool {
-    for s in trail.iter() {
-        if s.gap() {
-            continue
+fn intersects_with_own_trail(player: &Player) -> bool {
+    for s in player.trail.iter() {
+        let min_dist = 0.5 * player.thickness() + 0.5 * s.thickness();
+        let end_dist = player.pos.distance(s.end_pos());
+
+        if end_dist < min_dist {
+            if let TrailSection::Arc(s) = s {
+                let angle_diff = (s.start_angle - s.end_angle).abs();
+                if angle_diff > PI {
+                    let start_dist = s.start_pos.distance(player.pos);
+                    if start_dist < min_dist {
+                        return true;
+                    }
+                }
+            }
         }
 
-        match s {
-            TrailSection::Straight(s) => if intersects_straight_trailsection(s, pos, dist) {
-                return true;
-            }
-            TrailSection::Arc(s) => if intersects_arc_trailsection(s, pos, dist) {
+        if end_dist > min_dist {
+            if intersects_with_trail(
+                player.pos,
+                0.5 * player.thickness(),
+                std::slice::from_ref(s),
+            ) {
                 return true;
             }
         }
     }
 
-    return false
+    false
+}
+
+fn intersects_with_trail(pos: Pos2, dist: f32, trail: &[TrailSection]) -> bool {
+    for s in trail.iter() {
+        if s.gap() {
+            continue;
+        }
+
+        match s {
+            TrailSection::Straight(s) => {
+                if intersects_straight_trailsection(s, pos, dist) {
+                    return true;
+                }
+            }
+            TrailSection::Arc(s) => {
+                if intersects_arc_trailsection(s, pos, dist) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, dist: f32) -> bool {
@@ -666,48 +807,45 @@ fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, dist: f
     let center_line_angle = angle(s.start, s.end).rem_euclid(TAU);
     let inverse_center_line_angle = (center_line_angle + PI).rem_euclid(TAU);
 
-    let outer_line_pos_1 = Pos2 { 
+    let outer_line_pos_1 = Pos2 {
         x: s.start.x + (center_line_angle - FRAC_PI_2).cos() * 0.5 * s.thickness,
         y: s.start.y + (center_line_angle - FRAC_PI_2).sin() * 0.5 * s.thickness,
     };
-    let outer_line_pos_2 = Pos2 { 
+    let outer_line_pos_2 = Pos2 {
         x: s.start.x - (center_line_angle - FRAC_PI_2).cos() * 0.5 * s.thickness,
         y: s.start.y - (center_line_angle - FRAC_PI_2).sin() * 0.5 * s.thickness,
     };
 
-    let max_dist = PApplet.dist(x2, y2, x_l1, y_l1);
+    let max_dist = s.end.distance(outer_line_pos_1);
     if p1_dist > max_dist || p2_dist > max_dist {
         return false;
     }
 
-    let angleL1 = angle(x_l1, y_l1, x, y).rem_euclid(PApplet.TAU);
-    let angleL2 = angle(x_l2, y_l2, x, y).rem_euclid(PApplet.TAU);
-
-    if (center_line_angle < inverse_center_line_angle) {
-        if ((angleL1 > center_line_angle && angleL1 < inverse_center_line_angle)
-            != (angleL2 > center_line_angle && angleL2 < inverse_center_line_angle)
-        ) {
-            printD("linear\n")
-            return true
+    let angle_l1 = angle(outer_line_pos_1, pos).rem_euclid(TAU);
+    let angle_l2 = angle(outer_line_pos_2, pos).rem_euclid(TAU);
+    if center_line_angle < inverse_center_line_angle {
+        if (angle_l1 > center_line_angle && angle_l1 < inverse_center_line_angle)
+            != (angle_l2 > center_line_angle && angle_l2 < inverse_center_line_angle)
+        {
+            return true;
         }
     } else {
-        if ((angleL1 > center_line_angle || angleL1 < inverse_center_line_angle)
-            != (angleL2 > center_line_angle || angleL2 < inverse_center_line_angle)
-        ) {
-            printD("linear\n")
-            return true
+        if (angle_l1 > center_line_angle || angle_l1 < inverse_center_line_angle)
+            != (angle_l2 > center_line_angle || angle_l2 < inverse_center_line_angle)
+        {
+            return true;
         }
     }
 
-    return false
+    false
 }
 
 fn intersects_arc_trailsection(s: &ArcTrailSection, pos: Pos2, dist: f32) -> bool {
-    let p1_dist = s.start.distance(pos);
+    let p1_dist = s.start_pos.distance(pos);
     let p2_dist = s.end_pos().distance(pos);
     let max_dist = 0.5 * s.thickness + dist;
     if p1_dist < max_dist || p2_dist < max_dist {
-        return true
+        return true;
     }
 
     let min_dist = s.radius - 0.5 * s.thickness - dist;
@@ -715,14 +853,22 @@ fn intersects_arc_trailsection(s: &ArcTrailSection, pos: Pos2, dist: f32) -> boo
     let center_pos = s.center_pos();
     let arc_center_dist = center_pos.distance(pos);
     if arc_center_dist < min_dist || arc_center_dist > max_dist {
-        return false
+        return false;
     }
 
-    let arc_start_angle =
-        (if s.dir == TurnDirection::Right { s.start_angle } else { s.end_angle }).rem_euclid(TAU);
-    let arc_end_angle =
-        (if s.dir == TurnDirection::Right { s.end_angle } else { s.start_angle }).rem_euclid(TAU);
-    
+    let arc_start_angle = (if s.dir == TurnDirection::Right {
+        s.start_angle
+    } else {
+        s.end_angle
+    })
+    .rem_euclid(TAU);
+    let arc_end_angle = (if s.dir == TurnDirection::Right {
+        s.end_angle
+    } else {
+        s.start_angle
+    })
+    .rem_euclid(TAU);
+
     let arc_angle = angle(center_pos, pos).rem_euclid(TAU);
     if arc_start_angle <= arc_end_angle {
         if arc_angle > arc_start_angle && arc_angle < arc_end_angle {
