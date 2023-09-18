@@ -1,13 +1,42 @@
-use std::time::Instant;
+use std::f32::consts::PI;
 
 use eframe::CreationContext;
-use egui::{CentralPanel, Frame, Color32, Pos2, Key, Direction, Context, Rect, Rounding, Stroke, Vec2, Painter};
+use egui::{
+    Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Key, Painter, Pos2,
+    Rect, Rounding, Stroke, Vec2,
+};
 
-use crate::world::{WORLD_SIZE, Player, TrailSection};
+use crate::world::{
+    GameState, Item, Player, TrailSection, World, BASE_THICKNESS, ITEM_RADIUS, WORLD_SIZE,
+};
+
+pub const PLAYER_MENU_FIELDS: usize = 3;
 
 pub struct CurvefeverApp {
     world: World,
     menu: Menu,
+    world_to_screen_offset: Vec2,
+    world_to_screen_scale: f32,
+}
+
+impl CurvefeverApp {
+    #[inline(always)]
+    fn wts_pos(&self, pos: Pos2) -> Pos2 {
+        Pos2::new(
+            self.world_to_screen_scale * pos.x,
+            self.world_to_screen_scale * pos.y,
+        ) + self.world_to_screen_offset
+    }
+
+    #[inline(always)]
+    fn wts_vec(&self, vec: Vec2) -> Vec2 {
+        self.world_to_screen_scale * vec
+    }
+
+    #[inline(always)]
+    fn wts_rect(&self, rect: Rect) -> Rect {
+        Rect::from_min_max(self.wts_pos(rect.min), self.wts_pos(rect.max))
+    }
 }
 
 struct Menu {
@@ -27,374 +56,489 @@ enum MenuState {
     Player(PlayerMenu),
 }
 
+#[derive(Debug, Default)]
 struct PlayerMenu {
     player_index: usize,
     field_index: usize,
     selection_active: bool,
 }
 
-impl CurvefeverApp {
-    pub fn new(cc: &CreationContext) -> Self {
-        Self { world: World::new(), menu: Menu::new() }
+impl PlayerMenu {
+    fn selection_left(&mut self) {
+        if self.field_index == 0 {
+            self.field_index = PLAYER_MENU_FIELDS - 1;
+        } else {
+            self.field_index -= 1;
+        }
+    }
+
+    fn selection_right(&mut self) {
+        self.field_index += 1;
+        self.field_index %= PLAYER_MENU_FIELDS;
+    }
+
+    fn selection_up(&mut self, num_players: usize) {
+        if self.player_index == 0 {
+            self.player_index = num_players - 1;
+        } else {
+            self.player_index -= 1;
+        }
+    }
+
+    fn selection_down(&mut self, num_players: usize) {
+        self.player_index += 1;
+        self.player_index %= num_players;
     }
 }
 
-impl eframe::App for CurveFeverApp {
-    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+impl CurvefeverApp {
+    pub fn new(_: &CreationContext) -> Self {
+        Self {
+            world: World::new(),
+            menu: Menu::new(),
+            world_to_screen_offset: Vec2::ZERO,
+            world_to_screen_scale: 1.0,
+        }
+    }
+}
+
+impl eframe::App for CurvefeverApp {
+    fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
         ctx.request_repaint();
 
-        world::update(&mut self.world);
+        self.world.update();
 
-        CentralPanel::default().frame(Frame::none().fill(Color32::from_gray(50))).show(ctx, |ui| {
-            let painter = ui.painter();
-
-            let screen_size = ui.available_size();
-            let scale = screen_size / WORLD_SIZE;
-            let scale_factor = scale.min_elem();
-
-            if world.wallTeleporting() {
-                let rect = Rect::from_min_size(Pos2::ZERO, size);
-                let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
-                painter.rect(rect, Rounding::none(), Color32::TRANSPARENT, stroke);
-            }
-            for i in world.items.iter() {
-                draw_item(ui, p);
-            }
-            for p in world.players.iter() { 
-                draw_player(ui, p);
-            }
-
-            if matches!(self.world.state, GameState::Paused | GameState::Stopped) {
-                match &mut self.menu.state {
-                    MenuState::Normal => {
-                        // TODO
+        ctx.input(|input| match &mut self.menu.state {
+            MenuState::Player(player_menu) if self.world.in_menu() => {
+                if input.key_pressed(Key::Escape) {
+                    self.menu.state = MenuState::Normal;
+                } else if input.key_pressed(Key::Space) {
+                    player_menu.selection_active = !player_menu.selection_active;
+                } else if player_menu.selection_active {
+                    match player_menu.field_index {
+                        0 => {
+                            for e in input.events.iter() {
+                                if let Event::Key {
+                                    key,
+                                    pressed: true,
+                                    modifiers,
+                                    ..
+                                } = e
+                                {
+                                    match key {
+                                        Key::ArrowLeft | Key::ArrowUp => {
+                                            self.world.players[player_menu.player_index]
+                                                .color
+                                                .prev();
+                                        }
+                                        Key::ArrowRight | Key::ArrowDown => {
+                                            self.world.players[player_menu.player_index]
+                                                .color
+                                                .next();
+                                        }
+                                        Key::Enter => {
+                                            player_menu.selection_active =
+                                                !player_menu.selection_active;
+                                        }
+                                        Key::Backspace => {
+                                            self.world.players[player_menu.player_index].name.pop();
+                                        }
+                                        &k if (Key::A as u32..=Key::Z as u32)
+                                            .contains(&(k as u32)) =>
+                                        {
+                                            let char_offset = k as u32 - Key::A as u32;
+                                            let char = if modifiers.shift {
+                                                'A' as u32 + char_offset
+                                            } else {
+                                                'a' as u32 + char_offset
+                                            };
+                                            let char = char::from_u32(char).unwrap();
+                                            self.world.players[player_menu.player_index]
+                                                .name
+                                                .push(char);
+                                        }
+                                        &k if (Key::Num0 as u32..=Key::Num9 as u32)
+                                            .contains(&(k as u32)) =>
+                                        {
+                                            let char_offset = k as u32 - Key::Num0 as u32;
+                                            let char = '0' as u32 + char_offset;
+                                            let char = char::from_u32(char).unwrap();
+                                            self.world.players[player_menu.player_index]
+                                                .name
+                                                .push(char);
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            }
+                        }
+                        1 => {
+                            for e in input.events.iter() {
+                                if let Event::Key {
+                                    key, pressed: true, ..
+                                } = e
+                                {
+                                    self.world.players[player_menu.player_index].left_key = *key;
+                                }
+                            }
+                        }
+                        2 => {
+                            for e in input.events.iter() {
+                                if let Event::Key {
+                                    key, pressed: true, ..
+                                } = e
+                                {
+                                    self.world.players[player_menu.player_index].right_key = *key;
+                                }
+                            }
+                        }
+                        _ => (),
                     }
-                    MenuState::Player(player_menu) => {
-                        // TODO
+                } else {
+                    if input.key_pressed(Key::PlusEquals) {
+                        self.world.add_player();
+                    } else if input.key_pressed(Key::Minus) {
+                        self.world.remove_player(player_menu.player_index as usize);
+                        if player_menu.player_index as usize >= self.world.players.len() {
+                            player_menu.player_index -= 1;
+                        }
+                    }
+
+                    if input.key_pressed(Key::ArrowLeft) {
+                        player_menu.selection_left();
+                    } else if input.key_pressed(Key::ArrowRight) {
+                        player_menu.selection_right();
+                    } else if input.key_pressed(Key::ArrowUp) {
+                        player_menu.selection_up(self.world.players.len());
+                    } else if input.key_pressed(Key::ArrowDown) {
+                        player_menu.selection_down(self.world.players.len());
                     }
                 }
             }
+            _ => {
+                for p in self.world.players.iter_mut() {
+                    p.left_down = input.key_down(p.left_key);
+                    p.right_down = input.key_down(p.right_key);
+                }
 
-            if !matches!(self.menu.state, MenuState::Player(_)) {
-                // TODO: draw hud
+                if input.key_down(Key::Escape) {
+                    self.world.toggle_pause();
+                } else if input.key_down(Key::Space) {
+                    self.world.restart();
+                } else if input.key_down(Key::P) {
+                    self.menu.state = MenuState::Player(PlayerMenu::default());
+                }
             }
         });
-    }
 
-    fn draw_player(&self, painter: &mut Painter, player: &Player) {
-        if player.crashed {
-            return;
-        }
+        CentralPanel::default()
+            .frame(Frame::none().fill(Color32::BLACK))
+            .show(ctx, |ui| {
+                let painter = ui.painter();
 
-        for s in player.trail.iter() {
-            match s {
-                TrailSection::Straight(s) => {
-                    let mut stroke = Stroke::new(s.thickness, player.color.color32());
-                    painter.line_segment([s.start, s.end], stroke);
+                {
+                    let screen_size = ui.available_size();
+                    self.world_to_screen_scale = {
+                        let scale_factors = screen_size / WORLD_SIZE;
+                        scale_factors.min_elem()
+                    };
+                    self.world_to_screen_offset = {
+                        let scaled_size = self.world_to_screen_scale * WORLD_SIZE;
+                        0.5 * (screen_size - scaled_size)
+                    };
                 }
-                TrailSection::Arc(s) => {
 
+                self.rect_filled(
+                    painter,
+                    Rect::from_min_size(Pos2::ZERO, WORLD_SIZE),
+                    Rounding::none(),
+                    Color32::from_gray(50),
+                );
+
+                if self.world.wall_teleporting() {
+                    let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
+                    let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
+                    self.rect_stroke(painter, rect, Rounding::none(), stroke);
                 }
-            }
-        }
+                for i in self.world.items.iter() {
+                    self.draw_item(painter, i);
+                }
+                for p in self.world.players.iter() {
+                    self.draw_player(painter, p);
+                }
 
-        if (player.gap || player.trail.isEmpty()) {
-            let alpha = if player.gap { 180.0 } else { 255.0 };
-            painter.circle(player.pos, 0.5 * player.thickness(), player.color.color32(), Stroke::NONE);
-        }
+                if matches!(self.world.state, GameState::Paused | GameState::Stopped) {
+                    match &self.menu.state {
+                        MenuState::Normal => {
+                            self.draw_normal_menu(painter);
+                        }
+                        MenuState::Player(player_menu) => {
+                            self.draw_player_menu(painter, player_menu);
+                        }
+                    }
+                }
 
-        if (world.state == World.State.STARTING) {
-            drawPlayerDirectionArrow(player)
-        }
+                if matches!(
+                    self.world.state,
+                    GameState::Starting(_) | GameState::Running | GameState::Paused
+                ) {
+                    self.draw_hud(painter);
+                }
+            });
     }
 }
 
-class Curvefever() : PApplet() {
-    override fun draw() {
-        update()
-        world.update()
-
-        background(50)
-
-        if (world.wallTeleporting) {
-            noFill()
-            stroke(0f, 200f, 0f)
-            strokeWeight(2f)
-            rect(1f, 1f, width.toFloat() - 3f, height.toFloat() - 3f)
+impl CurvefeverApp {
+    fn draw_player(&self, painter: &Painter, player: &Player) {
+        let mut trail_path = Vec::new();
+        for s in player.trail.iter().filter(|s| !s.gap()) {
+            let color = player.color.color32();
+            painter.add
+            match s {
+                TrailSection::Straight(s) => {
+                    let stroke = Stroke::new(s.thickness, color);
+                    self.line_segment(painter, [s.start, s.end], stroke);
+                    self.circle_filled(painter, s.start, 0.25 * s.thickness, color);
+                    self.circle_filled(painter, s.end, 0.25 * s.thickness, color);
+                }
+                TrailSection::Arc(s) => {
+                    self.circle_filled(painter, s.start_pos, 0.25 * s.thickness, color);
+                    self.circle_filled(painter, s.end_pos(), 0.25 * s.thickness, color);
+                }
+            }
         }
-        world.items.forEach { drawItem(it) }
-        world.players.forEach { drawPlayer(it) }
 
-        if (menu) {
-            drawMenu()
+        if !player.crashed && (player.gap() || player.trail.is_empty()) {
+            let (r, g, b, _) = player.color.color32().to_tuple();
+            let a = if player.gap() { 180 } else { 255 };
+            let color = Color32::from_rgba_unmultiplied(r, g, b, a);
+            self.circle_filled(painter, player.pos, 0.5 * player.thickness(), color);
         }
 
-        if (!playerMenu) {
-            drawHUD()
+        if let GameState::Starting(_) = &self.world.state {
+            let stroke = Stroke::new(0.3 * BASE_THICKNESS, Color32::from_gray(230));
+
+            let start_distance = 10.0;
+            let end_distance = 30.0;
+            let arrow_distance = 5.0;
+            let left_tip_angle = player.angle - 0.25 * PI;
+            let right_tip_angle = player.angle + 0.25 * PI;
+
+            let base_start = player.pos
+                + Vec2::new(
+                    player.angle.cos() * start_distance,
+                    player.angle.sin() * start_distance,
+                );
+            let base_end = player.pos
+                + Vec2::new(
+                    player.angle.cos() * end_distance,
+                    player.angle.sin() * end_distance,
+                );
+
+            let tip_left = base_end
+                - Vec2::new(
+                    left_tip_angle.cos() * arrow_distance,
+                    left_tip_angle.sin() * arrow_distance,
+                );
+            let tip_right = base_end
+                - Vec2::new(
+                    right_tip_angle.cos() * arrow_distance,
+                    right_tip_angle.sin() * arrow_distance,
+                );
+
+            self.line_segment(painter, [base_start, base_end], stroke);
+            self.line_segment(painter, [tip_left, base_end], stroke);
+            self.line_segment(painter, [tip_right, base_end], stroke);
         }
     }
 
-    override fun keyPressed() {
+    fn draw_item(&self, painter: &Painter, item: &Item) {
+        self.circle_filled(painter, item.pos, ITEM_RADIUS, item.kind.color32());
+    }
 
-        if (playerMenu) {
-            when (key) {
-                ESC -> playerMenu = false
-                ENTER -> toggleSelection()
-                '+' -> if (!selectionActive) {
-                    world.addPlayer()
-                }
+    fn draw_normal_menu(&self, painter: &Painter) {
+        let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
+        self.rect_filled(
+            painter,
+            rect,
+            Rounding::none(),
+            Color32::from_rgba_unmultiplied(80, 80, 80, 100),
+        );
 
-                '-' -> if (!selectionActive) {
-                    world.removePlayer(selectedPlayerIndex)
-                    if (selectedPlayerIndex > world.players.size - 1) {
-                        selectedPlayerIndex = world.players.size - 1
-                    }
-                }
-            }
+        if self.world.state == GameState::Stopped {
+            let text = "SPACE : restart\nP : manage players\n";
+            let pos = (0.5 * WORLD_SIZE).to_pos2();
+            let font = FontId::new(20.0, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::CENTER_CENTER,
+                text,
+                font,
+                Color32::from_gray(200),
+            );
+        }
+    }
 
-            when (keyCode) {
-                LEFT -> selectionLeft()
-                RIGHT -> selectionRight()
-                UP -> selectionUp()
-                DOWN -> selectionDown()
-            }
+    fn draw_player_menu(&self, painter: &Painter, player_menu: &PlayerMenu) {
+        const FIELD_SIZE: Vec2 = Vec2::new(WORLD_SIZE.x / 6.0, WORLD_SIZE.y / 9.0);
 
-            if (selectionActive) {
-                when (selectedPlayerField) {
-                    0 -> if (key == BACKSPACE) {
-                        world.players[selectedPlayerIndex].name = world.players[selectedPlayerIndex].name.dropLast(1)
-                    } else if (keyCode != SHIFT && key != ENTER && key != ESC) {
-                        world.players[selectedPlayerIndex].name += key
-                    }
+        for (index, player) in self.world.players.iter().enumerate() {
+            //name
+            let pos = Pos2::new(
+                0.5 * WORLD_SIZE.x - FIELD_SIZE.x,
+                (index as f32 + 1.0) * FIELD_SIZE.y,
+            );
+            let font = FontId::new(0.5 * FIELD_SIZE.y, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::CENTER_CENTER,
+                &player.name,
+                font,
+                player.color.color32(),
+            );
 
-                    1 -> if (key != ENTER) {
-                        world.players[selectedPlayerIndex].setLeftKey(key, keyCode)
-                    }
+            //left key
+            let pos = Pos2::new(
+                0.5 * WORLD_SIZE.x + 0.5 * FIELD_SIZE.x,
+                (index as f32 + 1.0) * FIELD_SIZE.y,
+            );
+            let font = FontId::new(0.5 * FIELD_SIZE.y, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::CENTER_CENTER,
+                player.left_key.name(),
+                font,
+                Color32::from_gray(200),
+            );
 
-                    2 -> if (key != ENTER) {
-                        world.players[selectedPlayerIndex].setRightKey(key, keyCode)
-                    }
-                }
-            }
+            //right key
+            let pos = Pos2::new(
+                0.5 * WORLD_SIZE.x + 1.5 * FIELD_SIZE.x,
+                (index as f32 + 1.0) * FIELD_SIZE.y,
+            );
+            let font = FontId::new(0.5 * FIELD_SIZE.y, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::CENTER_CENTER,
+                player.right_key.name(),
+                font,
+                Color32::from_gray(200),
+            );
+        }
+
+        //selection
+        let color = if player_menu.selection_active {
+            Color32::from_gray(200)
         } else {
-            when (key) {
-                ' ' -> world.restart()
-                ESC -> menu()
-                in "Pp" -> if (world.state == World.State.STOPPED) playerMenu = true
-            }
+            Color32::from_gray(100)
+        };
 
-            world.players.forEach {
-                when (keyCode) {
-                    it.leftKeyCode -> it.leftPressed = true
-                    it.rightKeyCode -> it.rightPressed = true
-                }
-
-                it.turn()
-            }
+        let mut selection_size = FIELD_SIZE;
+        if player_menu.field_index == 0 {
+            selection_size.x *= 2.0;
         }
 
-        key = ' '
-        keyCode = 0
-    }
-
-    override fun keyReleased() {
-        world.players.forEach {
-            when (keyCode) {
-                it.leftKeyCode -> it.leftPressed = false
-                it.rightKeyCode -> it.rightPressed = false
-            }
-
-            it.turn()
-        }
-    }
-
-    private fun update() {
-        Time.update(world.state == World.State.PAUSED)
-        Specs.width = width
-        Specs.height = height
-    }
-
-    private fun drawMenu() {
-        noStroke()
-        fill(0, 100f)
-        rect(0f, 0f, width.toFloat(), height.toFloat())
-
-        if (playerMenu) {
-            val rectWidth = width / 6f
-            val rectHeight = height / 9f
-
-            world.players.forEachIndexed { index, player ->
-
-                //name
-                setFill(player.color)
-                textAlign(CENTER, CENTER)
-                textSize(rectHeight / 2f)
-                text(player.name, width / 2f - rectWidth * 1f, rectHeight * (index + 1f))
-
-                //left key
-                fill(200)
-                text(player.leftKey, width / 2f + rectWidth * 0.5f, rectHeight * (index + 1f))
-
-                //right key
-                text(player.rightKey, width / 2f + rectWidth * 1.5f, rectHeight * (index + 1f))
-            }
-
-            //selection
-            noFill()
-            stroke(if (selectionActive) 200 else 100)
-            strokeWeight(4f)
-            val w = if (selectedPlayerField == 0) rectWidth * 2 else rectWidth
-            val x = if (selectedPlayerField == 0) -2f else selectedPlayerField - 1f
-            rect(width / 2 + rectWidth * x, rectHeight * (selectedPlayerIndex + 0.5f), w, rectHeight)
-
-        } else if (world.state == World.State.STOPPED) {
-            val text = """
-                SPACE : restart
-                P : manage players
-                """.trimIndent()
-            fill(200)
-            textAlign(CENTER, CENTER)
-            textSize(20f)
-            text(text, width / 2f, height / 2f)
-        }
-    }
-
-    private fun drawHUD() {
-        textAlign(LEFT, TOP)
-        textSize(14f)
-
-        world.players.forEachIndexed { index, p ->
-            setFill(p.color)
-            text("${p.name} : ${p.score}", 10f, 10 + index * 20f)
-        }
-
-        if (world.state == World.State.STARTING) {
-            fill(230)
-            textAlign(CENTER, CENTER)
-            textSize(30f)
-            text(((world.startTime - Time.now) / 1000 + 1).toInt(), width / 2f, height / 2f)
-        }
-    }
-
-    private fun drawPlayer(player: Player) {
-        setStroke(player.color)
-        noFill()
-        for (ts: TrailSection in player.trail) {
-            drawPlayerTrailSection(ts)
-        }
-
-        if (player.gap || player.trail.isEmpty()) {
-            val alpha = if (player.gap) 180f else 255f
-            noStroke()
-            setFill(player.color, alpha)
-            circle(player.x, player.y, player.thickness)
-        }
-
-        if (world.state == World.State.STARTING) {
-            drawPlayerDirectionArrow(player)
-        }
-    }
-
-    private fun drawPlayerTrailSection(ts: TrailSection) {
-        if (ts.gap) return
-
-        strokeWeight(ts.thickness)
-
-        when (ts.direction) {
-            Player.Direction.STRAIGHT -> with(ts as LinearTrailSection) {
-                line(x1, y1, x2, y2)
-            }
-
-            else -> with(ts as ArcTrailSection) {
-                val arcStartAngle = if (startAngle > endAngle) endAngle else startAngle
-                val arcEndAngle = if (startAngle > endAngle) startAngle else endAngle
-
-                arc(arcCenterX, arcCenterY, radius * 2, radius * 2, arcStartAngle, arcEndAngle)
-            }
-        }
-    }
-
-    private fun drawPlayerDirectionArrow(player: Player) {
-        strokeWeight(player.thickness / 3)
-        stroke(230)
-
-        val startDistance = 10f
-        val endDistance = 30f
-        val arrowDistance = 5f
-        val firstArrowAngle = player.angle - PI / 4
-        val secondArrowAngle = player.angle + PI / 4
-
-        val startX = player.x + cos(player.angle) * startDistance
-        val startY = player.y + sin(player.angle) * startDistance
-        val endX = player.x + cos(player.angle) * endDistance
-        val endY = player.y + sin(player.angle) * endDistance
-
-        val firstArrowX = endX - cos(firstArrowAngle) * arrowDistance
-        val firstArrowY = endY - sin(firstArrowAngle) * arrowDistance
-        val secondArrowX = endX - cos(secondArrowAngle) * arrowDistance
-        val secondArrowY = endY - sin(secondArrowAngle) * arrowDistance
-
-
-        line(startX, startY, endX, endY)
-        line(endX, endY, firstArrowX, firstArrowY)
-        line(endX, endY, secondArrowX, secondArrowY)
-    }
-
-    private fun drawItem(item: Item) {
-        noStroke()
-        setFill(item.type.color)
-        ellipse(item.x, item.y, Item.RADIUS * 2, Item.RADIUS * 2)
-    }
-
-    private fun menu() {
-        if (menu) {
-            hideMenu()
+        let x = if player_menu.field_index == 0 {
+            0.5 * WORLD_SIZE.x - 2.0 * FIELD_SIZE.x
         } else {
-            showMenu()
+            0.5 * WORLD_SIZE.x + (player_menu.field_index as f32 - 1.0) * FIELD_SIZE.x
+        };
+        let y = (player_menu.player_index as f32 + 0.5) * FIELD_SIZE.y;
+        let rect = Rect::from_min_size(Pos2::new(x, y), selection_size);
+        let stroke = Stroke::new(4.0, color);
+        self.rect_stroke(painter, rect, Rounding::same(0.2 * FIELD_SIZE.y), stroke);
+    }
+
+    fn draw_hud(&self, painter: &Painter) {
+        for (index, p) in self.world.players.iter().enumerate() {
+            let text = format!("{} : {}", p.name, p.score);
+            let pos = Pos2::new(10.0, 10.0 + index as f32 * 20.0);
+            let font = FontId::new(14.0, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::LEFT_TOP,
+                text,
+                font,
+                p.color.color32(),
+            );
+        }
+
+        if let GameState::Starting(start) = self.world.state {
+            let text = self
+                .world
+                .clock
+                .now
+                .duration_since(start)
+                .unwrap()
+                .as_secs();
+            let pos = (0.5 * WORLD_SIZE).to_pos2();
+            let font = FontId::new(30.0, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::CENTER_CENTER,
+                text,
+                font,
+                Color32::from_gray(230),
+            );
         }
     }
 
-    private fun showMenu() {
-        world.pause()
+    fn text(
+        &self,
+        painter: &Painter,
+        pos: Pos2,
+        anchor: Align2,
+        text: impl ToString,
+        mut font_id: FontId,
+        text_color: Color32,
+    ) {
+        font_id.size *= self.world_to_screen_scale;
+        painter.text(self.wts_pos(pos), anchor, text, font_id, text_color);
     }
 
-    private fun hideMenu() {
-        world.resume()
+    fn circle_filled(&self, painter: &Painter, pos: Pos2, mut radius: f32, fill_color: Color32) {
+        radius *= self.world_to_screen_scale;
+        painter.circle_filled(self.wts_pos(pos), radius, fill_color);
     }
 
-    private fun toggleSelection() {
-        selectionActive = !selectionActive
+    fn line_segment(&self, painter: &Painter, points: [Pos2; 2], mut stroke: Stroke) {
+        let points = [self.wts_pos(points[0]), self.wts_pos(points[1])];
+        stroke.width *= self.world_to_screen_scale;
+        painter.line_segment(points, stroke);
     }
 
-    private fun selectionLeft() {
-        if (!selectionActive) {
-            selectedPlayerField = floorMod(--selectedPlayerField, selectionFields)
-        } else if (selectedPlayerField == 0) {
-            world.players[selectedPlayerIndex].color = world.prevColor(selectedPlayerIndex)
-        }
+    fn rect_stroke(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        mut rounding: Rounding,
+        mut stroke: Stroke,
+    ) {
+        rounding.nw *= self.world_to_screen_scale;
+        rounding.ne *= self.world_to_screen_scale;
+        rounding.sw *= self.world_to_screen_scale;
+        rounding.se *= self.world_to_screen_scale;
+        stroke.width *= self.world_to_screen_scale;
+        painter.rect_stroke(self.wts_rect(rect), rounding, stroke);
     }
 
-    private fun selectionRight() {
-        if (!selectionActive) {
-            selectedPlayerField = (selectedPlayerField + 1) % selectionFields
-        } else if (selectedPlayerField == 0) {
-            world.players[selectedPlayerIndex].color = world.nextColor(selectedPlayerIndex)
-        }
-    }
-
-    private fun selectionUp() {
-        if (!selectionActive) {
-            selectedPlayerIndex = floorMod(--selectedPlayerIndex, world.players.size)
-        } else if (selectedPlayerField == 0) {
-            world.players[selectedPlayerIndex].color = world.prevColor(selectedPlayerIndex)
-        }
-    }
-
-    private fun selectionDown() {
-        if (!selectionActive) {
-            selectedPlayerIndex = (selectedPlayerIndex + 1) % world.players.size
-        } else if (selectedPlayerField == 0) {
-            world.players[selectedPlayerIndex].color = world.nextColor(selectedPlayerIndex)
-        }
+    fn rect_filled(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        mut rounding: Rounding,
+        fill_color: Color32,
+    ) {
+        rounding.nw *= self.world_to_screen_scale;
+        rounding.ne *= self.world_to_screen_scale;
+        rounding.sw *= self.world_to_screen_scale;
+        rounding.se *= self.world_to_screen_scale;
+        painter.rect_filled(self.wts_rect(rect), rounding, fill_color);
     }
 }

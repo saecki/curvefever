@@ -2,17 +2,18 @@ use eframe::NativeOptions;
 
 use app::CurvefeverApp;
 
-mod app;
-mod world;
+pub mod app;
+pub mod world;
 
 fn main() {
     let options = NativeOptions {
         follow_system_theme: true,
         maximized: true,
+        // fullscreen: true,
         ..Default::default()
     };
     let res = eframe::run_native(
-        "minesweeper",
+        "curvefever",
         options,
         Box::new(|c| Box::new(CurvefeverApp::new(c))),
     );
