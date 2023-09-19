@@ -257,16 +257,16 @@ impl eframe::App for CurvefeverApp {
                     Color32::from_gray(50),
                 );
 
-                if self.world.wall_teleporting() {
-                    let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
-                    let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
-                    self.rect_stroke(painter, rect, Rounding::none(), stroke);
-                }
                 for i in self.world.items.iter() {
                     self.draw_item(painter, i);
                 }
                 for p in self.world.players.iter() {
                     self.draw_player(painter, p);
+                }
+                if self.world.wall_teleporting() {
+                    let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
+                    let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
+                    self.rect_stroke(painter, rect, Rounding::none(), stroke);
                 }
 
                 if matches!(self.world.state, GameState::Paused | GameState::Stopped) {
@@ -293,16 +293,35 @@ impl eframe::App for CurvefeverApp {
 impl CurvefeverApp {
     fn draw_player(&self, painter: &Painter, player: &Player) {
         // draw trail
-        for s in player.trail.iter().filter(|s| !s.gap()) {
+        let mut trail_iter = player.trail.iter().peekable();
+        let mut trail_points = Vec::new();
+        let mut last_pos = trail_iter.peek().map_or(Pos2::ZERO, |s| s.start_pos());
+        let mut thickness = trail_iter.peek().map_or(0.0, |s| s.thickness());
+        let mut push_start = true;
+        while let Some(s) = trail_iter.next() {
             if s.gap() {
+                let color = player.color.color32();
+                self.draw_trail(painter, trail_points.clone(), thickness, color);
+                trail_points.clear();
+                
+                push_start = true;
+                last_pos = s.end_pos();
                 continue;
             }
+            
+            if s.thickness() != thickness || s.start_pos() != last_pos {
+                let color = player.color.color32();
+                self.draw_trail(painter, trail_points.clone(), thickness, color);
+                trail_points.clear();
+                
+                push_start = true;
+            }
 
-            let mut trail_points;
             match s {
                 TrailSection::Straight(s) => {
-                    trail_points = Vec::with_capacity(2);
-                    trail_points.push(s.start);
+                    if push_start {
+                        trail_points.push(s.start);
+                    }
                     trail_points.push(s.end);
                 }
                 TrailSection::Arc(s) => {
@@ -328,11 +347,11 @@ impl CurvefeverApp {
                     let num_points = (angle_delta / (0.01 * TAU)).abs().round().max(1.0);
                     let angle_step = angle_delta / num_points;
 
-                    trail_points = Vec::with_capacity(num_points as usize);
-
+                    trail_points.reserve(num_points as usize);
                     let center_pos = s.center_pos();
                     let arc_start_angle = s.arc_start_angle();
-                    for i in 0..(num_points as u8) {
+                    let iter_start = 1 - push_start as u8;
+                    for i in iter_start..(num_points as u8) {
                         let arc_angle = arc_start_angle + i as f32 * angle_step;
                         let pos =
                             center_pos + s.radius * Vec2::new(arc_angle.cos(), arc_angle.sin());
@@ -342,10 +361,12 @@ impl CurvefeverApp {
                 }
             }
 
+            thickness = s.thickness();
+            last_pos = s.end_pos();
+        }
+        if trail_points.len() > 1 {
             let color = player.color.color32();
-            let stroke = Stroke::new(s.thickness(), color);
-            let path = PathShape::line(trail_points.clone(), stroke);
-            self.add_path(painter, path);
+            self.draw_trail(painter, trail_points, thickness, color);
         }
 
         // draw player dot
@@ -392,6 +413,29 @@ impl CurvefeverApp {
             self.line_segment(painter, [tip_left, base_end], stroke);
             self.line_segment(painter, [tip_right, base_end], stroke);
         }
+    }
+
+    fn draw_trail(
+        &self,
+        painter: &Painter,
+        trail_points: Vec<Pos2>,
+        thickness: f32,
+        color: Color32,
+    ) {
+        if trail_points.len() < 2 {
+            return;
+        }
+
+        let stroke = Stroke::new(thickness, color);
+
+        let first = *trail_points.first().unwrap();
+        self.circle_filled(painter, first, 0.5 * thickness - 0.1, color);
+
+        let last = *trail_points.last().unwrap();
+        self.circle_filled(painter, last, 0.5 * thickness - 0.1, color);
+
+        let path = PathShape::line(trail_points, stroke);
+        self.add_path(painter, path);
     }
 
     fn draw_item(&self, painter: &Painter, item: &Item) {
