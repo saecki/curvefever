@@ -11,7 +11,7 @@ pub const WORLD_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 pub const MIN_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
 pub const MIN_ITEM_DIST: f32 = 120.0;
-pub const ITEM_SPAWN_RATE: f32 = 0.002;
+pub const ITEM_SPAWN_RATE: f32 = 0.48;
 pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
 pub const MAX_ITEMS: usize = 5;
@@ -801,7 +801,7 @@ fn gen_item_position(players: &[Player], items: &[Item]) -> Pos2 {
         };
 
         for p in players.iter() {
-            if intersects(pos, p.pos, MIN_ITEM_DIST) {
+            if intersects_trail(pos, MIN_ITEM_DIST, &p.trail) {
                 continue 'outer;
             }
         }
