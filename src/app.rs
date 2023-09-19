@@ -1,13 +1,15 @@
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use eframe::CreationContext;
+use egui::epaint::PathShape;
 use egui::{
     Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Key, Painter, Pos2,
-    Rect, Rounding, Stroke, Vec2,
+    Rect, Rounding, Shape, Stroke, Vec2,
 };
 
 use crate::world::{
-    GameState, Item, Player, TrailSection, World, BASE_THICKNESS, ITEM_RADIUS, WORLD_SIZE,
+    GameState, Item, Player, TrailSection, TurnDirection, World, BASE_THICKNESS, ITEM_RADIUS,
+    START_DELAY, WORLD_SIZE,
 };
 
 pub const PLAYER_MENU_FIELDS: usize = 3;
@@ -290,31 +292,71 @@ impl eframe::App for CurvefeverApp {
 
 impl CurvefeverApp {
     fn draw_player(&self, painter: &Painter, player: &Player) {
-        let mut trail_path = Vec::new();
+        // draw trail
         for s in player.trail.iter().filter(|s| !s.gap()) {
-            let color = player.color.color32();
-            painter.add
+            if s.gap() {
+                continue;
+            }
+
+            let mut trail_points;
             match s {
                 TrailSection::Straight(s) => {
-                    let stroke = Stroke::new(s.thickness, color);
-                    self.line_segment(painter, [s.start, s.end], stroke);
-                    self.circle_filled(painter, s.start, 0.25 * s.thickness, color);
-                    self.circle_filled(painter, s.end, 0.25 * s.thickness, color);
+                    trail_points = Vec::with_capacity(2);
+                    trail_points.push(s.start);
+                    trail_points.push(s.end);
                 }
                 TrailSection::Arc(s) => {
-                    self.circle_filled(painter, s.start_pos, 0.25 * s.thickness, color);
-                    self.circle_filled(painter, s.end_pos(), 0.25 * s.thickness, color);
+                    let angle_delta = match s.dir {
+                        TurnDirection::Right => {
+                            let angle_delta = if s.player_end_angle < s.player_start_angle {
+                                s.player_end_angle.rem_euclid(TAU) - s.player_start_angle
+                            } else {
+                                s.player_end_angle - s.player_start_angle
+                            };
+                            angle_delta
+                        }
+                        TurnDirection::Left => {
+                            let angle_delta = if s.player_start_angle < s.player_end_angle {
+                                s.player_start_angle.rem_euclid(TAU) - s.player_end_angle
+                            } else {
+                                s.player_start_angle - s.player_end_angle
+                            };
+                            -angle_delta
+                        }
+                    };
+
+                    let num_points = (angle_delta / (0.01 * TAU)).abs().round().max(1.0);
+                    let angle_step = angle_delta / num_points;
+
+                    trail_points = Vec::with_capacity(num_points as usize);
+
+                    let center_pos = s.center_pos();
+                    let arc_start_angle = s.arc_start_angle();
+                    for i in 0..(num_points as u8) {
+                        let arc_angle = arc_start_angle + i as f32 * angle_step;
+                        let pos =
+                            center_pos + s.radius * Vec2::new(arc_angle.cos(), arc_angle.sin());
+                        trail_points.push(pos);
+                    }
+                    trail_points.push(s.end_pos());
                 }
             }
+
+            let color = player.color.color32();
+            let stroke = Stroke::new(s.thickness(), color);
+            let path = PathShape::line(trail_points.clone(), stroke);
+            self.add_path(painter, path);
         }
 
+        // draw player dot
         if !player.crashed && (player.gap() || player.trail.is_empty()) {
             let (r, g, b, _) = player.color.color32().to_tuple();
-            let a = if player.gap() { 180 } else { 255 };
+            let a = if player.gap() { 20 } else { 255 };
             let color = Color32::from_rgba_unmultiplied(r, g, b, a);
             self.circle_filled(painter, player.pos, 0.5 * player.thickness(), color);
         }
 
+        // draw arrow
         if let GameState::Starting(_) = &self.world.state {
             let stroke = Stroke::new(0.3 * BASE_THICKNESS, Color32::from_gray(230));
 
@@ -362,7 +404,7 @@ impl CurvefeverApp {
             painter,
             rect,
             Rounding::none(),
-            Color32::from_rgba_unmultiplied(80, 80, 80, 100),
+            Color32::from_black_alpha(100),
         );
 
         if self.world.state == GameState::Stopped {
@@ -469,13 +511,14 @@ impl CurvefeverApp {
         }
 
         if let GameState::Starting(start) = self.world.state {
-            let text = self
+            let time = self
                 .world
                 .clock
                 .now
                 .duration_since(start)
                 .unwrap()
                 .as_secs();
+            let text = START_DELAY.as_secs() - time;
             let pos = (0.5 * WORLD_SIZE).to_pos2();
             let font = FontId::new(30.0, FontFamily::Proportional);
             self.text(
@@ -540,5 +583,13 @@ impl CurvefeverApp {
         rounding.sw *= self.world_to_screen_scale;
         rounding.se *= self.world_to_screen_scale;
         painter.rect_filled(self.wts_rect(rect), rounding, fill_color);
+    }
+
+    fn add_path(&self, painter: &Painter, mut path: PathShape) {
+        for p in path.points.iter_mut() {
+            *p = self.wts_pos(*p);
+        }
+        path.stroke.width *= self.world_to_screen_scale;
+        painter.add(Shape::Path(path));
     }
 }

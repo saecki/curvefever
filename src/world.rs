@@ -15,9 +15,12 @@ pub const ITEM_SPAWN_RATE: f32 = 0.002;
 pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
 pub const MAX_ITEMS: usize = 5;
+pub const GAP_RATE: f32 = 0.4;
 
 pub const PLAYER_EFFECT_DURATION: Duration = Duration::from_secs(5);
 pub const PLAYER_EFFECT_DEVIATION_DURATION: Duration = Duration::from_secs(1);
+pub const GAP_EFFECT_DURATION: Duration = Duration::from_millis(150);
+pub const GAP_EFFECT_DEVIATION_DURATION: Duration = Duration::from_millis(100);
 pub const WORLD_EFFECT_DURATION: Duration = Duration::from_secs(10);
 pub const WORLD_EFFECT_DEVIATION_DURATION: Duration = Duration::from_secs(3);
 pub const BASE_SPEED: f32 = 150.0;
@@ -319,7 +322,7 @@ pub enum TurnDirection {
 }
 
 impl TurnDirection {
-    fn angle_sign(&self) -> f32 {
+    pub fn angle_sign(&self) -> f32 {
         match self {
             TurnDirection::Right => 1.0,
             TurnDirection::Left => -1.0,
@@ -475,7 +478,8 @@ impl World {
 
                 // spawn items
                 if self.items.len() < MAX_ITEMS {
-                    if rng.gen::<f32>() >= ITEM_SPAWN_RATE {
+                    let weighted_rate = self.clock.frame_delta.as_secs_f32() * ITEM_SPAWN_RATE;
+                    if rng.gen_range(0.0..=1.0) < weighted_rate {
                         let item = Item {
                             pos: gen_item_position(&self.players, &self.items),
                             kind: *ItemKind::members().choose(&mut rng).unwrap(),
@@ -491,6 +495,11 @@ impl World {
                     }
 
                     p.effects.retain(|e| e.start + e.duration > self.clock.now);
+
+                    let weighted_range = self.clock.frame_delta.as_secs_f32() * GAP_RATE;
+                    if !p.gap() && rng.gen_range(0.0..=1.0) < weighted_range {
+                        p.effects.push(gap_effect(&self.clock));
+                    }
 
                     move_player(&self.clock, p);
                 }
@@ -955,6 +964,15 @@ fn intersects(a: Pos2, b: Pos2, dist: f32) -> bool {
 fn angle(a: Pos2, b: Pos2) -> f32 {
     let diff = b - a;
     f32::atan2(diff.y, diff.x)
+}
+
+fn gap_effect(clock: &Clock) -> Effect<PlayerEffect> {
+    let mut rng = rand::thread_rng();
+    Effect {
+        start: clock.now,
+        duration: GAP_EFFECT_DURATION + rng.gen_range(0..=1) * GAP_EFFECT_DEVIATION_DURATION,
+        kind: PlayerEffect::Gap,
+    }
 }
 
 fn player_effect(clock: &Clock, kind: PlayerEffect) -> Effect<PlayerEffect> {
