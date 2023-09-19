@@ -10,7 +10,7 @@ use curvefever_derive::EnumMembersArray;
 pub const WORLD_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 pub const MIN_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
-pub const MIN_ITEM_DIST: f32 = 120.0;
+pub const MIN_ITEM_DIST: f32 = 80.0;
 pub const ITEM_SPAWN_RATE: f32 = 0.48;
 pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
@@ -480,11 +480,13 @@ impl World {
                 if self.items.len() < MAX_ITEMS {
                     let weighted_rate = self.clock.frame_delta.as_secs_f32() * ITEM_SPAWN_RATE;
                     if rng.gen_range(0.0..=1.0) < weighted_rate {
-                        let item = Item {
-                            pos: gen_item_position(&self.players, &self.items),
-                            kind: *ItemKind::members().choose(&mut rng).unwrap(),
-                        };
-                        self.items.push(item);
+                        if let Some(pos) = gen_item_position(&self.players, &self.items) {
+                            let item = Item {
+                                pos,
+                                kind: *ItemKind::members().choose(&mut rng).unwrap(),
+                            };
+                            self.items.push(item);
+                        }
                     }
                 }
 
@@ -772,7 +774,7 @@ fn gen_player_position(others: &[Player]) -> Pos2 {
     let mut rng = rand::thread_rng();
     let mut pos = Pos2::ZERO;
 
-    'outer: for _ in 0..1000 {
+    'outer: for _ in 0..1_000_000 {
         pos = Pos2 {
             x: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.x - 2.0 * MIN_WALL_DIST)),
             y: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.y - 2.0 * MIN_WALL_DIST)),
@@ -790,12 +792,11 @@ fn gen_player_position(others: &[Player]) -> Pos2 {
     pos
 }
 
-fn gen_item_position(players: &[Player], items: &[Item]) -> Pos2 {
+fn gen_item_position(players: &[Player], items: &[Item]) -> Option<Pos2> {
     let mut rng = rand::thread_rng();
-    let mut pos = Pos2::ZERO;
 
-    'outer: for _ in 0..1000 {
-        pos = Pos2 {
+    'outer: for i in 0..10_000 {
+        let pos = Pos2 {
             x: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.x - 2.0 * MIN_WALL_DIST)),
             y: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.y - 2.0 * MIN_WALL_DIST)),
         };
@@ -812,10 +813,10 @@ fn gen_item_position(players: &[Player], items: &[Item]) -> Pos2 {
             }
         }
 
-        break;
+        return Some(pos);
     }
 
-    pos
+    None
 }
 
 fn intersects_own_trail(player: &Player) -> bool {
