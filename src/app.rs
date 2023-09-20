@@ -234,11 +234,11 @@ impl eframe::App for CurvefeverApp {
                     p.right_down = input.key_down(p.right_key);
                 }
 
-                if input.key_down(Key::Escape) {
+                if input.key_pressed(Key::Escape) {
                     self.world.toggle_pause();
-                } else if input.key_down(Key::Space) {
+                } else if input.key_pressed(Key::Space) {
                     self.world.restart();
-                } else if input.key_down(Key::P) {
+                } else if input.key_pressed(Key::P) {
                     self.menu.state = MenuState::Player(PlayerMenu::default());
                 }
             }
