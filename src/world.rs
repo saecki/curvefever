@@ -63,9 +63,11 @@ impl World {
         let player2 = random_player("Player2".to_string(), Key::A, Key::D, &players);
         players.push(player2);
 
+        let clock = Clock::new();
+        let now = clock.now;
         Self {
-            clock: Clock::new(),
-            state: GameState::Stopped,
+            clock,
+            state: GameState::Stopped(now),
             items: Vec::new(),
             effects: Vec::new(),
             crash_feed: Vec::new(),
@@ -100,10 +102,10 @@ impl Clock {
         let now = SystemTime::now();
 
         match state {
-            GameState::Paused | GameState::Stopped => {
+            GameState::Paused(_) | GameState::Stopped(_) => {
                 self.frame_delta = Duration::ZERO;
             }
-            GameState::Starting(_) | GameState::Running => {
+            GameState::Starting(_) | GameState::Running(_) => {
                 self.frame_delta = now.duration_since(self.last_frame).unwrap();
                 self.now += self.frame_delta;
             }
@@ -115,9 +117,9 @@ impl Clock {
 #[derive(PartialEq, Eq)]
 pub enum GameState {
     Starting(SystemTime),
-    Running,
-    Paused,
-    Stopped,
+    Running(SystemTime),
+    Paused(SystemTime),
+    Stopped(SystemTime),
 }
 
 pub struct Item {
@@ -149,7 +151,7 @@ impl ItemKind {
             Self::Expand => Color32::from_rgb(220, 200, 0),
             Self::Shrink => Color32::from_rgb(230, 120, 40),
             Self::Ghost => Color32::from_gray(220),
-            Self::NoGap => Color32::from_gray(8),
+            Self::NoGap => Color32::from_gray(0),
             Self::WallTeleporting => Color32::from_rgb(0, 230, 50),
             Self::Clear => Color32::from_rgb(230, 40, 220),
         }
@@ -167,6 +169,21 @@ impl ItemKind {
             ItemKind::NoGap => 3,
             ItemKind::WallTeleporting => 5,
             ItemKind::Clear => 2,
+        }
+    }
+
+    pub const fn name(&self) -> &str {
+        match self {
+            ItemKind::Speedup => "Speedup",
+            ItemKind::Slowdown => "Slowdown",
+            ItemKind::FastTurning => "Fast turning",
+            ItemKind::SlowTurning => "Slow turning",
+            ItemKind::Expand => "Expand",
+            ItemKind::Shrink => "Shrink",
+            ItemKind::Ghost => "Ghost",
+            ItemKind::NoGap => "No gap",
+            ItemKind::WallTeleporting => "Wall teleporting",
+            ItemKind::Clear => "Clear trails",
         }
     }
 }
@@ -366,12 +383,12 @@ impl PlayerColor {
         match self {
             Self::Color0 => Color32::from_rgb(230, 100, 20),
             Self::Color1 => Color32::from_rgb(50, 230, 20),
-            Self::Color2 => Color32::from_rgb(130, 100, 200),
+            Self::Color2 => Color32::from_rgb(150, 100, 230),
             Self::Color3 => Color32::from_rgb(30, 200, 200),
             Self::Color4 => Color32::from_rgb(230, 40, 200),
             Self::Color5 => Color32::from_rgb(230, 20, 10),
             Self::Color6 => Color32::from_rgb(230, 230, 30),
-            Self::Color7 => Color32::from_rgb(50, 40, 230),
+            Self::Color7 => Color32::from_rgb(70, 80, 230),
         }
     }
 
@@ -554,12 +571,23 @@ impl World {
 
         match self.state {
             GameState::Starting(start_time) => {
+                for player in self.players.iter_mut() {
+                    let dir = match (player.left_down, player.right_down) {
+                        (true, true) | (false, false) => continue,
+                        (true, false) => TurnDirection::Left,
+                        (false, true) => TurnDirection::Right,
+                    };
+                    let delta_time = self.clock.frame_delta.as_secs_f32();
+                    player.angle +=
+                        delta_time * BASE_SPEED / BASE_TURNING_RADIUS * dir.angle_sign();
+                }
+
                 let now = self.clock.now;
                 if now > start_time + START_DELAY {
-                    self.state = GameState::Running;
+                    self.state = GameState::Running(self.clock.now);
                 }
             }
-            GameState::Running => {
+            GameState::Running(start_time) => {
                 // remove effects
                 self.effects
                     .retain(|e| e.start + e.duration > self.clock.now);
@@ -769,24 +797,24 @@ impl World {
                             p.score += 1;
                         }
                     }
-                    self.state = GameState::Stopped;
+                    self.state = GameState::Stopped(start_time);
                 }
             }
-            GameState::Paused => (),
-            GameState::Stopped => (),
+            GameState::Paused(_) => (),
+            GameState::Stopped(_) => (),
         }
     }
 
     pub fn toggle_pause(&mut self) {
-        if self.state == GameState::Running {
-            self.state = GameState::Paused;
-        } else if self.state == GameState::Paused {
-            self.state = GameState::Running;
+        match self.state {
+            GameState::Running(s) => self.state = GameState::Paused(s),
+            GameState::Paused(s) => self.state = GameState::Running(s),
+            _ => (),
         }
     }
 
     pub fn restart(&mut self) {
-        if matches!(self.state, GameState::Stopped) {
+        if matches!(self.state, GameState::Stopped(_)) {
             self.state = GameState::Starting(self.clock.now);
             self.items.clear();
             self.effects.clear();

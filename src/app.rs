@@ -11,7 +11,7 @@ use egui::{
 
 use crate::world::{
     CrashMessage, GameState, Item, Player, TrailSection, TurnDirection, World, BASE_THICKNESS,
-    ITEM_RADIUS, START_DELAY, WORLD_SIZE,
+    ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, WORLD_SIZE,
 };
 
 pub const PLAYER_MENU_FIELDS: usize = 3;
@@ -59,13 +59,14 @@ struct Menu {
 impl Menu {
     pub fn new() -> Self {
         Self {
-            state: MenuState::Normal,
+            state: MenuState::Home,
         }
     }
 }
 
 enum MenuState {
-    Normal,
+    Home,
+    Help,
     Player(PlayerMenu),
 }
 
@@ -122,10 +123,35 @@ impl eframe::App for CurvefeverApp {
         self.world.update();
 
         ctx.input(|input| match &mut self.menu.state {
-            MenuState::Player(player_menu) if self.world.state == GameState::Stopped => {
+            MenuState::Home => {
+                for p in self.world.players.iter_mut() {
+                    p.left_down = input.key_down(p.left_key);
+                    p.right_down = input.key_down(p.right_key);
+                }
+
                 if input.key_pressed(Key::Escape) {
-                    self.menu.state = MenuState::Normal;
+                    self.world.toggle_pause();
                 } else if input.key_pressed(Key::Space) {
+                    self.world.restart();
+                } else if input.key_pressed(Key::H) {
+                    self.menu.state = MenuState::Help;
+                } else if input.key_pressed(Key::P) {
+                    self.menu.state = MenuState::Player(PlayerMenu::default());
+                }
+            }
+            MenuState::Help => {
+                if input.key_pressed(Key::Escape) {
+                    self.menu.state = MenuState::Home;
+                }
+            }
+            MenuState::Player(player_menu) => {
+                if input.key_pressed(Key::Escape) {
+                    if player_menu.selection_active {
+                        player_menu.selection_active = false;
+                    } else {
+                        self.menu.state = MenuState::Home;
+                    }
+                } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
                     player_menu.selection_active = !player_menu.selection_active;
                 } else if player_menu.selection_active {
                     match player_menu.field_index {
@@ -226,20 +252,16 @@ impl eframe::App for CurvefeverApp {
                     } else if input.key_pressed(Key::ArrowDown) {
                         player_menu.selection_down(self.world.players.len());
                     }
-                }
-            }
-            _ => {
-                for p in self.world.players.iter_mut() {
-                    p.left_down = input.key_down(p.left_key);
-                    p.right_down = input.key_down(p.right_key);
-                }
 
-                if input.key_pressed(Key::Escape) {
-                    self.world.toggle_pause();
-                } else if input.key_pressed(Key::Space) {
-                    self.world.restart();
-                } else if input.key_pressed(Key::P) {
-                    self.menu.state = MenuState::Player(PlayerMenu::default());
+                    if input.key_pressed(Key::H) {
+                        player_menu.selection_left();
+                    } else if input.key_pressed(Key::L) {
+                        player_menu.selection_right();
+                    } else if input.key_pressed(Key::K) {
+                        player_menu.selection_up(self.world.players.len());
+                    } else if input.key_pressed(Key::J) {
+                        player_menu.selection_down(self.world.players.len());
+                    }
                 }
             }
         });
@@ -280,18 +302,28 @@ impl eframe::App for CurvefeverApp {
                     self.rect_stroke(painter, rect, Rounding::none(), stroke);
                 }
 
-                if matches!(self.world.state, GameState::Paused | GameState::Stopped) {
+                if matches!(
+                    self.world.state,
+                    GameState::Paused(_) | GameState::Stopped(_)
+                ) {
+                    // menu background
+                    let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
+                    self.rect_filled(
+                        painter,
+                        rect,
+                        Rounding::none(),
+                        Color32::from_black_alpha(100),
+                    );
+
                     match &self.menu.state {
-                        MenuState::Player(player_menu)
-                            if self.world.state == GameState::Stopped =>
-                        {
-                            self.draw_player_menu(painter, player_menu);
-                        }
-                        MenuState::Player(_) => {
-                            self.menu.state = MenuState::Normal;
-                        }
-                        MenuState::Normal => {
+                        MenuState::Home => {
                             self.draw_normal_menu(painter);
+                        }
+                        MenuState::Help => {
+                            self.draw_help_menu(painter);
+                        }
+                        MenuState::Player(player_menu) => {
+                            self.draw_player_menu(painter, player_menu);
                         }
                     }
                 }
@@ -453,16 +485,8 @@ impl CurvefeverApp {
     }
 
     fn draw_normal_menu(&self, painter: &Painter) {
-        let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
-        self.rect_filled(
-            painter,
-            rect,
-            Rounding::none(),
-            Color32::from_black_alpha(100),
-        );
-
-        if self.world.state == GameState::Stopped {
-            let text = "SPACE : restart\nP : manage players\n";
+        if let GameState::Stopped(_) = self.world.state {
+            let text = "SPACE : restart\nH : show help\nP : manage players\n";
             let pos = (0.5 * WORLD_SIZE).to_pos2();
             let font = FontId::new(20.0, FontFamily::Proportional);
             self.text(
@@ -476,15 +500,32 @@ impl CurvefeverApp {
         }
     }
 
-    fn draw_player_menu(&self, painter: &Painter, player_menu: &PlayerMenu) {
-        const FIELD_SIZE: Vec2 = Vec2::new(WORLD_SIZE.x / 6.0, WORLD_SIZE.y / 9.0);
+    fn draw_help_menu(&self, painter: &Painter) {
+        const FIELD_HEIGHT: f32 = WORLD_SIZE.y / (ITEM_KINDS.len() + 1) as f32;
+        for (i, item) in ITEM_KINDS.iter().enumerate() {
+            let pos = Pos2::new(0.5 * WORLD_SIZE.x, (i + 1) as f32 * FIELD_HEIGHT);
+            self.circle_filled(
+                painter,
+                pos - Vec2::new(40.0, 0.0),
+                ITEM_RADIUS,
+                item.color32(),
+            );
+            let font = FontId::new(20.0, FontFamily::Proportional);
+            self.text(
+                painter,
+                pos,
+                Align2::LEFT_CENTER,
+                item.name(),
+                font,
+                Color32::from_gray(200),
+            );
+        }
+    }
 
-        let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
-        self.rect_filled(
-            painter,
-            rect,
-            Rounding::none(),
-            Color32::from_black_alpha(100),
+    fn draw_player_menu(&self, painter: &Painter, player_menu: &PlayerMenu) {
+        const FIELD_SIZE: Vec2 = Vec2::new(
+            WORLD_SIZE.x / 6.0,
+            WORLD_SIZE.y / PLAYER_COLORS.len() as f32,
         );
 
         for (index, player) in self.world.players.iter().enumerate() {
@@ -618,7 +659,7 @@ impl CurvefeverApp {
                 max.x = effect_pos.x + 10.0;
                 effect_pos.x += 20.0;
             }
-            
+
             let outline_rect = Rect::from_min_max(min, max);
             let stroke = Stroke::new(2.0, HUD_OUTLINE_COLOR);
             self.set_rect(
@@ -635,14 +676,14 @@ impl CurvefeverApp {
         let mut text_pos = Pos2::new(WORLD_SIZE.x - 10.0, 10.0);
         for c in self.world.crash_feed.iter() {
             match self.world.state {
-                GameState::Starting(_) | GameState::Running => {
+                GameState::Starting(_) | GameState::Running(_) => {
                     const CRASH_DISPLAY_DURATION: Duration = Duration::from_secs(5);
                     let passed_duration = self.world.clock.now.duration_since(c.time).unwrap();
                     if passed_duration > CRASH_DISPLAY_DURATION {
                         continue;
                     }
                 }
-                GameState::Paused | GameState::Stopped => (),
+                GameState::Paused(_) | GameState::Stopped(_) => (),
             }
 
             let outline_rect_idx = painter.add(Shape::Noop);
@@ -747,25 +788,37 @@ impl CurvefeverApp {
         }
 
         // countdown
-        if let GameState::Starting(start) = self.world.state {
-            let time = self
-                .world
-                .clock
-                .now
-                .duration_since(start)
-                .unwrap()
-                .as_secs();
-            let text = START_DELAY.as_secs() - time;
-            let pos = (0.5 * WORLD_SIZE).to_pos2();
-            let font = FontId::new(30.0, FontFamily::Proportional);
-            self.text(
-                painter,
-                pos,
-                Align2::CENTER_CENTER,
-                text,
-                font,
-                HUD_TEXT_COLOR,
-            );
+        match self.world.state {
+            GameState::Starting(start) => {
+                let time = self
+                    .world
+                    .clock
+                    .now
+                    .duration_since(start)
+                    .unwrap()
+                    .as_secs();
+                let text = START_DELAY.as_secs() - time;
+                let pos = (0.5 * WORLD_SIZE).to_pos2();
+                let font = FontId::new(80.0, FontFamily::Monospace);
+                self.text(
+                    painter,
+                    pos,
+                    Align2::CENTER_CENTER,
+                    text,
+                    font,
+                    HUD_TEXT_COLOR,
+                );
+            }
+            GameState::Running(start) | GameState::Paused(start) | GameState::Stopped(start) => {
+                let pos = Pos2::new(0.5 * WORLD_SIZE.x, 10.0);
+                let font = FontId::new(20.0, FontFamily::Monospace);
+                let duration = self.world.clock.now.duration_since(start).unwrap();
+                let total_secs = duration.as_secs();
+                let minutes = total_secs / 60;
+                let secs = total_secs % 60;
+                let text = format!("{minutes:02}:{secs:02}");
+                self.text(painter, pos, Align2::CENTER_TOP, text, font, HUD_TEXT_COLOR);
+            }
         }
     }
 
