@@ -328,7 +328,7 @@ pub fn derive_members_array(input: TokenStream) -> TokenStream {
     let count = members.len();
     let mut output = format!(
         "impl {name} {{
-            {vis} fn members() -> &'static [{name}; {count}] {{
+            {vis} const fn members() -> &'static [{name}; {count}] {{
                 &[\n"
     );
 

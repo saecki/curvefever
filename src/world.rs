@@ -2,7 +2,6 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::time::{Duration, SystemTime};
 
 use egui::{Color32, Key, Pos2, Vec2};
-use rand::seq::SliceRandom;
 use rand::Rng;
 
 use curvefever_derive::EnumMembersArray;
@@ -11,7 +10,7 @@ pub const WORLD_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 pub const MIN_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
 pub const MIN_ITEM_DIST: f32 = 80.0;
-pub const ITEM_SPAWN_RATE: f32 = 0.48;
+pub const ITEM_SPAWN_RATE: f32 = 0.32;
 pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
 pub const MAX_ITEMS: usize = 5;
@@ -29,6 +28,18 @@ pub const BASE_THICKNESS: f32 = 4.0;
 pub const MIN_THICKNESS: f32 = 1.0;
 pub const BASE_TURNING_RADIUS: f32 = 50.0;
 pub const MIN_TURNING_RADIUS: f32 = 25.0;
+
+pub const ITEM_KINDS: &[ItemKind] = ItemKind::members();
+pub const SUM_OF_ITEM_SPAWN_RATES: u8 = {
+    let mut i = 0;
+    let mut sum = 0;
+    while i < ITEM_KINDS.len() {
+        sum += ITEM_KINDS[i].spawn_rate();
+        i += 1;
+    }
+    sum
+};
+pub const PLAYER_COLORS: &[PlayerColor] = PlayerColor::members();
 
 pub struct World {
     pub clock: Clock,
@@ -117,21 +128,40 @@ pub enum ItemKind {
     SlowTurning,
     Expand,
     Shrink,
+    Ghost,
+    NoGap,
     WallTeleporting,
     Clear,
 }
 
 impl ItemKind {
-    pub fn color32(&self) -> Color32 {
+    pub const fn color32(&self) -> Color32 {
         match self {
             Self::Speedup => Color32::from_rgb(50, 60, 200),
-            Self::Slowdown => Color32::from_rgb(200, 60, 50),
+            Self::Slowdown => Color32::from_rgb(220, 20, 50),
             Self::FastTurning => Color32::from_rgb(30, 240, 220),
             Self::SlowTurning => Color32::from_rgb(150, 40, 240),
-            Self::Expand => Color32::from_rgb(150, 230, 0),
-            Self::Shrink => Color32::from_rgb(200, 200, 40),
-            Self::WallTeleporting => Color32::from_rgb(0, 230, 150),
+            Self::Expand => Color32::from_rgb(220, 200, 0),
+            Self::Shrink => Color32::from_rgb(230, 120, 40),
+            Self::Ghost => Color32::from_gray(220),
+            Self::NoGap => Color32::from_gray(120),
+            Self::WallTeleporting => Color32::from_rgb(0, 230, 50),
             Self::Clear => Color32::from_rgb(230, 40, 220),
+        }
+    }
+
+    pub const fn spawn_rate(&self) -> u8 {
+        match self {
+            ItemKind::Speedup => 5,
+            ItemKind::Slowdown => 5,
+            ItemKind::FastTurning => 5,
+            ItemKind::SlowTurning => 5,
+            ItemKind::Expand => 5,
+            ItemKind::Shrink => 5,
+            ItemKind::Ghost => 1,
+            ItemKind::NoGap => 3,
+            ItemKind::WallTeleporting => 5,
+            ItemKind::Clear => 2,
         }
     }
 }
@@ -149,6 +179,7 @@ pub enum PlayerEffect {
     Speed(f32),
     Turning(f32),
     Gap,
+    NoGap,
 }
 
 #[derive(PartialEq, Eq)]
@@ -219,6 +250,10 @@ impl Player {
         self.effects.iter().any(|e| e.kind == PlayerEffect::Gap)
     }
 
+    pub fn no_gap(&self) -> bool {
+        self.effects.iter().any(|e| e.kind == PlayerEffect::NoGap)
+    }
+
     fn speed(&self) -> f32 {
         let speed = BASE_SPEED
             + self
@@ -286,15 +321,13 @@ impl PlayerColor {
     }
 
     pub fn prev(&mut self) {
-        let members = Self::members();
-        let idx = (*self as isize - 1).rem_euclid(members.len() as isize);
-        *self = members[idx as usize];
+        let idx = (*self as isize - 1).rem_euclid(PLAYER_COLORS.len() as isize);
+        *self = PLAYER_COLORS[idx as usize];
     }
 
     pub fn next(&mut self) {
-        let members = Self::members();
-        let idx = (*self as usize + 1) % members.len();
-        *self = members[idx];
+        let idx = (*self as usize + 1) % PLAYER_COLORS.len();
+        *self = PLAYER_COLORS[idx];
     }
 }
 
@@ -480,10 +513,20 @@ impl World {
                 if self.items.len() < MAX_ITEMS {
                     let weighted_rate = self.clock.frame_delta.as_secs_f32() * ITEM_SPAWN_RATE;
                     if rng.gen_range(0.0..=1.0) < weighted_rate {
+                        let item_kind_idx = rng.gen_range(0..SUM_OF_ITEM_SPAWN_RATES);
+                        let mut idx = 0;
+                        let mut item_kind = None;
+                        for k in ITEM_KINDS.iter() {
+                            idx += k.spawn_rate();
+                            if idx > item_kind_idx {
+                                item_kind = Some(*k);
+                                break;
+                            }
+                        }
                         if let Some(pos) = gen_item_position(&self.players, &self.items) {
                             let item = Item {
                                 pos,
-                                kind: *ItemKind::members().choose(&mut rng).unwrap(),
+                                kind: item_kind.expect("item kind should match one item"),
                             };
                             self.items.push(item);
                         }
@@ -499,7 +542,7 @@ impl World {
                     p.effects.retain(|e| e.start + e.duration > self.clock.now);
 
                     let weighted_range = self.clock.frame_delta.as_secs_f32() * GAP_RATE;
-                    if !p.gap() && rng.gen_range(0.0..=1.0) < weighted_range {
+                    if !p.gap() && !p.no_gap() && rng.gen_range(0.0..=1.0) < weighted_range {
                         p.effects.push(gap_effect(&self.clock));
                     }
 
@@ -600,6 +643,16 @@ impl World {
                                     p.effects
                                         .push(player_effect(&self.clock, PlayerEffect::Size(-2.0)));
                                 }
+                                ItemKind::Ghost => {
+                                    p.effects.retain(|e| e.kind != PlayerEffect::NoGap);
+                                    p.effects
+                                        .push(player_effect(&self.clock, PlayerEffect::Gap));
+                                }
+                                ItemKind::NoGap => {
+                                    p.effects.retain(|e| e.kind != PlayerEffect::Gap);
+                                    p.effects
+                                        .push(player_effect(&self.clock, PlayerEffect::NoGap));
+                                }
                                 ItemKind::WallTeleporting => {
                                     self.effects.push(world_effect(
                                         &self.clock,
@@ -665,7 +718,7 @@ impl World {
     }
 
     pub fn add_player(&mut self) {
-        if self.players.len() >= PlayerColor::members().len() {
+        if self.players.len() >= PLAYER_COLORS.len() {
             return;
         }
         let name = format!("Player{}", self.players.len() + 1);
@@ -760,9 +813,8 @@ fn random_player(name: String, left_key: Key, right_key: Key, others: &[Player])
     let mut rng = rand::thread_rng();
     let pos = gen_player_position(&others);
     let angle = rng.gen_range(0.0..TAU);
-    let colors = PlayerColor::members();
-    let color_idx = rng.gen_range(0..colors.len() - others.len());
-    let color = colors
+    let color_idx = rng.gen_range(0..PLAYER_COLORS.len() - others.len());
+    let color = PLAYER_COLORS
         .iter()
         .filter(|c| others.iter().all(|p| **c != p.color))
         .nth(color_idx)
@@ -795,7 +847,7 @@ fn gen_player_position(others: &[Player]) -> Pos2 {
 fn gen_item_position(players: &[Player], items: &[Item]) -> Option<Pos2> {
     let mut rng = rand::thread_rng();
 
-    'outer: for i in 0..10_000 {
+    'outer: for _ in 0..10_000 {
         let pos = Pos2 {
             x: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.x - 2.0 * MIN_WALL_DIST)),
             y: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.y - 2.0 * MIN_WALL_DIST)),
