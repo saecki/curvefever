@@ -10,7 +10,7 @@ pub const WORLD_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 pub const MIN_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
 pub const MIN_ITEM_DIST: f32 = 80.0;
-pub const ITEM_SPAWN_RATE: f32 = 0.32;
+pub const ITEM_SPAWN_RATE: f32 = 0.48;
 pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
 pub const MAX_ITEMS: usize = 5;
@@ -47,6 +47,7 @@ pub struct World {
     pub items: Vec<Item>,
     pub effects: Vec<Effect<WorldEffect>>,
     pub players: Vec<Player>,
+    pub crash_feed: Vec<Crash>,
 }
 
 impl World {
@@ -67,6 +68,7 @@ impl World {
             state: GameState::Stopped,
             items: Vec::new(),
             effects: Vec::new(),
+            crash_feed: Vec::new(),
             players,
         }
     }
@@ -94,14 +96,17 @@ impl Clock {
         }
     }
 
-    pub fn update(&mut self, paused: bool) {
+    pub fn update(&mut self, state: &GameState) {
         let now = SystemTime::now();
 
-        if paused {
-            self.frame_delta = Duration::ZERO;
-        } else {
-            self.frame_delta = now.duration_since(self.last_frame).unwrap();
-            self.now += self.frame_delta;
+        match state {
+            GameState::Paused | GameState::Stopped => {
+                self.frame_delta = Duration::ZERO;
+            }
+            GameState::Starting(_) | GameState::Running => {
+                self.frame_delta = now.duration_since(self.last_frame).unwrap();
+                self.now += self.frame_delta;
+            }
         }
         self.last_frame = now;
     }
@@ -139,12 +144,12 @@ impl ItemKind {
         match self {
             Self::Speedup => Color32::from_rgb(50, 60, 200),
             Self::Slowdown => Color32::from_rgb(220, 20, 50),
-            Self::FastTurning => Color32::from_rgb(30, 240, 220),
-            Self::SlowTurning => Color32::from_rgb(150, 40, 240),
+            Self::FastTurning => Color32::from_rgb(150, 40, 240),
+            Self::SlowTurning => Color32::from_rgb(30, 240, 220),
             Self::Expand => Color32::from_rgb(220, 200, 0),
             Self::Shrink => Color32::from_rgb(230, 120, 40),
             Self::Ghost => Color32::from_gray(220),
-            Self::NoGap => Color32::from_gray(120),
+            Self::NoGap => Color32::from_gray(8),
             Self::WallTeleporting => Color32::from_rgb(0, 230, 50),
             Self::Clear => Color32::from_rgb(230, 40, 220),
         }
@@ -168,9 +173,9 @@ impl ItemKind {
 
 #[derive(Debug, PartialEq)]
 pub struct Effect<T> {
-    start: SystemTime,
-    duration: Duration,
-    kind: T,
+    pub start: SystemTime,
+    pub duration: Duration,
+    pub kind: T,
 }
 
 #[derive(Debug, PartialEq)]
@@ -178,8 +183,26 @@ pub enum PlayerEffect {
     Size(f32),
     Speed(f32),
     Turning(f32),
-    Gap,
+    Ghost,
     NoGap,
+    Gap,
+}
+
+impl PlayerEffect {
+    pub fn item_kind(&self) -> Option<ItemKind> {
+        let kind = match self {
+            PlayerEffect::Size(s) if *s < 0.0 => ItemKind::Shrink,
+            PlayerEffect::Size(_) => ItemKind::Expand,
+            PlayerEffect::Speed(s) if *s < 0.0 => ItemKind::Slowdown,
+            PlayerEffect::Speed(_) => ItemKind::Speedup,
+            PlayerEffect::Turning(r) if *r < 0.0 => ItemKind::FastTurning,
+            PlayerEffect::Turning(_) => ItemKind::SlowTurning,
+            PlayerEffect::Ghost => ItemKind::Ghost,
+            PlayerEffect::NoGap => ItemKind::NoGap,
+            PlayerEffect::Gap => return None,
+        };
+        Some(kind)
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -194,13 +217,13 @@ pub struct Player {
     pub pos: Pos2,
     pub angle: f32,
     pub color: PlayerColor,
-    effects: Vec<Effect<PlayerEffect>>,
+    pub effects: Vec<Effect<PlayerEffect>>,
     pub left_key: Key,
     pub right_key: Key,
     pub left_down: bool,
     pub right_down: bool,
     direction: Direction,
-    just_crashed: bool,
+    pub just_crashed: bool,
     pub crashed: bool,
     pub score: u16,
 }
@@ -247,7 +270,9 @@ impl Player {
     }
 
     pub fn gap(&self) -> bool {
-        self.effects.iter().any(|e| e.kind == PlayerEffect::Gap)
+        self.effects
+            .iter()
+            .any(|e| matches!(e.kind, PlayerEffect::Gap | PlayerEffect::Ghost))
     }
 
     pub fn no_gap(&self) -> bool {
@@ -292,6 +317,36 @@ impl Player {
                 .sum::<f32>();
         radius.max(MIN_TURNING_RADIUS)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Crash {
+    pub time: SystemTime,
+    pub message: CrashMessage,
+}
+
+impl Crash {
+    pub fn new(time: SystemTime, message: CrashMessage) -> Self {
+        Self { time, message }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CrashMessage {
+    Own {
+        name: String,
+        color: Color32,
+    },
+    Wall {
+        name: String,
+        color: Color32,
+    },
+    Other {
+        crashed_name: String,
+        crashed_color: Color32,
+        other_name: String,
+        other_color: Color32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumMembersArray)]
@@ -495,7 +550,7 @@ impl ArcTrailSection {
 impl World {
     pub fn update(&mut self) {
         let mut rng = rand::thread_rng();
-        self.clock.update(self.state == GameState::Paused);
+        self.clock.update(&self.state);
 
         match self.state {
             GameState::Starting(start_time) => {
@@ -581,6 +636,13 @@ impl World {
                             || p.pos.y < 0.5 * thickness
                             || p.pos.y > WORLD_SIZE.y - 0.5 * thickness
                         {
+                            self.crash_feed.push(Crash::new(
+                                self.clock.now,
+                                CrashMessage::Wall {
+                                    name: p.name.clone(),
+                                    color: p.color.color32(),
+                                },
+                            ));
                             p.just_crashed = true;
                         }
                     }
@@ -588,6 +650,13 @@ impl World {
                     if !self.players[pi].gap() {
                         let p = &mut self.players[pi];
                         if intersects_own_trail(p) {
+                            self.crash_feed.push(Crash::new(
+                                self.clock.now,
+                                CrashMessage::Own {
+                                    name: p.name.clone(),
+                                    color: p.color.color32(),
+                                },
+                            ));
                             p.just_crashed = true;
                         }
 
@@ -595,7 +664,18 @@ impl World {
                         for (_, o) in others {
                             let p = &self.players[pi];
                             if intersects_trail(p.pos, 0.5 * p.thickness(), &o.trail) {
+                                let other_name = o.name.clone();
+                                let other_color = o.color.color32();
                                 let p = &mut self.players[pi];
+                                self.crash_feed.push(Crash::new(
+                                    self.clock.now,
+                                    CrashMessage::Other {
+                                        crashed_name: p.name.clone(),
+                                        crashed_color: p.color.color32(),
+                                        other_name,
+                                        other_color,
+                                    },
+                                ));
                                 p.just_crashed = true;
                                 break;
                             }
@@ -626,13 +706,13 @@ impl World {
                                 ItemKind::FastTurning => {
                                     p.effects.push(player_effect(
                                         &self.clock,
-                                        PlayerEffect::Turning(20.0),
+                                        PlayerEffect::Turning(-20.0),
                                     ));
                                 }
                                 ItemKind::SlowTurning => {
                                     p.effects.push(player_effect(
                                         &self.clock,
-                                        PlayerEffect::Turning(-20.0),
+                                        PlayerEffect::Turning(20.0),
                                     ));
                                 }
                                 ItemKind::Expand => {
@@ -684,6 +764,11 @@ impl World {
                     }
                 }
                 if num_alive_players < 2 {
+                    for p in self.players.iter_mut() {
+                        if !p.crashed {
+                            p.score += 1;
+                        }
+                    }
                     self.state = GameState::Stopped;
                 }
             }
@@ -705,16 +790,13 @@ impl World {
             self.state = GameState::Starting(self.clock.now);
             self.items.clear();
             self.effects.clear();
+            self.crash_feed.clear();
 
             for i in 0..self.players.len() {
                 let pos = gen_player_position(&self.players[0..i]);
                 self.players[i].reset(pos);
             }
         }
-    }
-
-    pub fn in_menu(&self) -> bool {
-        matches!(self.state, GameState::Paused | GameState::Stopped)
     }
 
     pub fn add_player(&mut self) {
