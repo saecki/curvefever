@@ -479,6 +479,14 @@ impl CurvefeverApp {
     fn draw_player_menu(&self, painter: &Painter, player_menu: &PlayerMenu) {
         const FIELD_SIZE: Vec2 = Vec2::new(WORLD_SIZE.x / 6.0, WORLD_SIZE.y / 9.0);
 
+        let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
+        self.rect_filled(
+            painter,
+            rect,
+            Rounding::none(),
+            Color32::from_black_alpha(100),
+        );
+
         for (index, player) in self.world.players.iter().enumerate() {
             //name
             let pos = Pos2::new(
@@ -550,19 +558,38 @@ impl CurvefeverApp {
     }
 
     fn draw_hud(&self, painter: &Painter) {
+        const HUD_FONT: FontId = FontId::new(14.0, FontFamily::Proportional);
+        const HUD_ALPHA: u8 = 80;
+        const HUD_TEXT_COLOR: Color32 = Color32::from_rgba_premultiplied(160, 160, 160, HUD_ALPHA);
+        const HUD_OUTLINE_COLOR: Color32 = Color32::from_rgba_premultiplied(80, 80, 80, HUD_ALPHA);
+        const HUD_BG_COLOR: Color32 = Color32::from_rgba_premultiplied(12, 12, 12, HUD_ALPHA);
+        const TEXT_OFFSET: Vec2 = Vec2::new(5.0, 0.0);
+
         for (index, p) in self.world.players.iter().enumerate() {
             // player name and score
-            let text = format!("{} : {}", p.name, p.score);
-            let pos = Pos2::new(10.0, 10.0 + index as f32 * 20.0);
-            let font = FontId::new(14.0, FontFamily::Proportional);
+            let outline_rect_idx = painter.add(Shape::Noop);
+
+            let text_pos = Pos2::new(10.0, 10.0 + index as f32 * 30.0);
             let text_rect = self.text(
                 painter,
-                pos,
+                text_pos,
                 Align2::LEFT_TOP,
-                text,
-                font,
+                &p.name,
+                HUD_FONT,
                 p.color.color32(),
             );
+            let min = text_pos;
+
+            let text_pos = text_rect.right_top() + TEXT_OFFSET;
+            let text_rect = self.text(
+                painter,
+                text_pos,
+                Align2::LEFT_TOP,
+                p.score,
+                HUD_FONT,
+                HUD_TEXT_COLOR,
+            );
+            let mut max = text_rect.right_bottom();
 
             // player effects
             let mut effect_pos = text_rect.right_center() + Vec2::new(20.0, 0.0);
@@ -584,23 +611,28 @@ impl CurvefeverApp {
                     angle += angle_step;
                 }
                 let color = item_kind.color32();
-                let stroke = Stroke::new(3.0, color);
+                let stroke = Stroke::new(3.0, color.with_alpha(HUD_ALPHA));
                 let path = PathShape::line(points, stroke);
                 self.add_path(painter, path);
 
+                max.x = effect_pos.x + 10.0;
                 effect_pos.x += 20.0;
             }
+            
+            let outline_rect = Rect::from_min_max(min, max);
+            let stroke = Stroke::new(2.0, HUD_OUTLINE_COLOR);
+            self.set_rect(
+                painter,
+                outline_rect_idx,
+                outline_rect.expand(4.0),
+                Rounding::same(4.0),
+                HUD_BG_COLOR,
+                stroke,
+            );
         }
 
         // crash feed
-        const FEED_ALPHA: u8 = 80;
-        const FEED_TEXT_COLOR: Color32 =
-            Color32::from_rgba_premultiplied(160, 160, 160, FEED_ALPHA);
-        const FEED_OUTLINE_COLOR: Color32 =
-            Color32::from_rgba_premultiplied(100, 100, 100, FEED_ALPHA);
-        const FEED_BG_COLOR: Color32 = Color32::from_rgba_premultiplied(40, 40, 40, 4);
-        const MESSAGE_OFFSET: Vec2 = Vec2::new(5.0, 0.0);
-        let mut message_pos = Pos2::new(WORLD_SIZE.x - 10.0, 10.0);
+        let mut text_pos = Pos2::new(WORLD_SIZE.x - 10.0, 10.0);
         for c in self.world.crash_feed.iter() {
             match self.world.state {
                 GameState::Starting(_) | GameState::Running => {
@@ -613,28 +645,27 @@ impl CurvefeverApp {
                 GameState::Paused | GameState::Stopped => (),
             }
 
-            let font = FontId::new(14.0, FontFamily::Proportional);
             let outline_rect_idx = painter.add(Shape::Noop);
             let outline_rect = match &c.message {
                 CrashMessage::Own { name, color } => {
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
-                        "crashed into themselves",
-                        font.clone(),
-                        FEED_TEXT_COLOR,
+                        "crashed into themself",
+                        HUD_FONT,
+                        HUD_TEXT_COLOR,
                     );
                     let max = text_rect.right_bottom();
 
-                    let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
+                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
                         name,
-                        font,
-                        color.with_alpha(FEED_ALPHA),
+                        HUD_FONT,
+                        color.with_alpha(HUD_ALPHA),
                     );
                     let min = text_rect.left_top();
                     Rect::from_min_max(min, max)
@@ -642,22 +673,22 @@ impl CurvefeverApp {
                 CrashMessage::Wall { name, color } => {
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
                         "crashed into the wall",
-                        font.clone(),
-                        FEED_TEXT_COLOR,
+                        HUD_FONT,
+                        HUD_TEXT_COLOR,
                     );
                     let max = text_rect.right_bottom();
 
-                    let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
+                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
                         name,
-                        font,
-                        color.with_alpha(FEED_ALPHA),
+                        HUD_FONT,
+                        color.with_alpha(HUD_ALPHA),
                     );
                     let min = text_rect.left_top();
                     Rect::from_min_max(min, max)
@@ -670,49 +701,49 @@ impl CurvefeverApp {
                 } => {
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
                         other_name,
-                        font.clone(),
-                        other_color.with_alpha(FEED_ALPHA),
+                        HUD_FONT,
+                        other_color.with_alpha(HUD_ALPHA),
                     );
                     let max = text_rect.right_bottom();
 
-                    let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
+                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
                         "crashed into",
-                        font.clone(),
-                        FEED_TEXT_COLOR,
+                        HUD_FONT,
+                        HUD_TEXT_COLOR,
                     );
 
-                    let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
+                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
                     let text_rect = self.text(
                         painter,
-                        message_pos,
+                        text_pos,
                         Align2::RIGHT_TOP,
                         crashed_name,
-                        font,
-                        crashed_color.with_alpha(FEED_ALPHA),
+                        HUD_FONT,
+                        crashed_color.with_alpha(HUD_ALPHA),
                     );
                     let min = text_rect.left_top();
                     Rect::from_min_max(min, max)
                 }
             };
 
-            let stroke = Stroke::new(2.0, FEED_OUTLINE_COLOR);
+            let stroke = Stroke::new(2.0, HUD_OUTLINE_COLOR);
             self.set_rect(
                 painter,
                 outline_rect_idx,
                 outline_rect.expand(4.0),
                 Rounding::same(4.0),
-                FEED_BG_COLOR,
+                HUD_BG_COLOR,
                 stroke,
             );
 
-            message_pos.y += 30.0;
+            text_pos.y += 30.0;
         }
 
         // countdown
@@ -733,7 +764,7 @@ impl CurvefeverApp {
                 Align2::CENTER_CENTER,
                 text,
                 font,
-                Color32::from_gray(230),
+                HUD_TEXT_COLOR,
             );
         }
     }
