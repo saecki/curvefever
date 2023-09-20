@@ -2,7 +2,8 @@ use std::f32::consts::{PI, TAU};
 use std::time::Duration;
 
 use eframe::CreationContext;
-use egui::epaint::PathShape;
+use egui::epaint::{PathShape, RectShape};
+use egui::layers::ShapeIdx;
 use egui::{
     Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Key, Painter, Pos2,
     Rect, Rounding, Shape, Stroke, Vec2,
@@ -381,9 +382,8 @@ impl CurvefeverApp {
 
         // draw player dot
         if !player.crashed && (player.gap() || player.trail.is_empty()) {
-            let (r, g, b, _) = player.color.color32().to_tuple();
             let a = if player.gap() { 120 } else { 255 };
-            let color = Color32::from_rgba_unmultiplied(r, g, b, a);
+            let color = player.color.color32().with_alpha(a);
             self.circle_filled(painter, player.pos, 0.5 * player.thickness(), color);
         }
 
@@ -593,22 +593,29 @@ impl CurvefeverApp {
         }
 
         // crash feed
+        const FEED_ALPHA: u8 = 80;
+        const FEED_TEXT_COLOR: Color32 =
+            Color32::from_rgba_premultiplied(160, 160, 160, FEED_ALPHA);
+        const FEED_OUTLINE_COLOR: Color32 =
+            Color32::from_rgba_premultiplied(100, 100, 100, FEED_ALPHA);
+        const FEED_BG_COLOR: Color32 = Color32::from_rgba_premultiplied(40, 40, 40, 4);
         const MESSAGE_OFFSET: Vec2 = Vec2::new(5.0, 0.0);
         let mut message_pos = Pos2::new(WORLD_SIZE.x - 10.0, 10.0);
         for c in self.world.crash_feed.iter() {
             match self.world.state {
-                GameState::Starting(_) | GameState::Running => (),
-                GameState::Paused | GameState::Stopped => {
+                GameState::Starting(_) | GameState::Running => {
                     const CRASH_DISPLAY_DURATION: Duration = Duration::from_secs(5);
                     let passed_duration = self.world.clock.now.duration_since(c.time).unwrap();
                     if passed_duration > CRASH_DISPLAY_DURATION {
                         continue;
                     }
                 }
+                GameState::Paused | GameState::Stopped => (),
             }
 
             let font = FontId::new(14.0, FontFamily::Proportional);
-            match &c.message {
+            let outline_rect_idx = painter.add(Shape::Noop);
+            let outline_rect = match &c.message {
                 CrashMessage::Own { name, color } => {
                     let text_rect = self.text(
                         painter,
@@ -616,11 +623,21 @@ impl CurvefeverApp {
                         Align2::RIGHT_TOP,
                         "crashed into themselves",
                         font.clone(),
-                        Color32::from_gray(240),
+                        FEED_TEXT_COLOR,
                     );
+                    let max = text_rect.right_bottom();
 
                     let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
-                    self.text(painter, message_pos, Align2::RIGHT_TOP, name, font, *color);
+                    let text_rect = self.text(
+                        painter,
+                        message_pos,
+                        Align2::RIGHT_TOP,
+                        name,
+                        font,
+                        color.with_alpha(FEED_ALPHA),
+                    );
+                    let min = text_rect.left_top();
+                    Rect::from_min_max(min, max)
                 }
                 CrashMessage::Wall { name, color } => {
                     let text_rect = self.text(
@@ -629,11 +646,21 @@ impl CurvefeverApp {
                         Align2::RIGHT_TOP,
                         "crashed into the wall",
                         font.clone(),
-                        Color32::from_gray(240),
+                        FEED_TEXT_COLOR,
                     );
+                    let max = text_rect.right_bottom();
 
                     let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
-                    self.text(painter, message_pos, Align2::RIGHT_TOP, name, font, *color);
+                    let text_rect = self.text(
+                        painter,
+                        message_pos,
+                        Align2::RIGHT_TOP,
+                        name,
+                        font,
+                        color.with_alpha(FEED_ALPHA),
+                    );
+                    let min = text_rect.left_top();
+                    Rect::from_min_max(min, max)
                 }
                 CrashMessage::Other {
                     crashed_name,
@@ -647,8 +674,9 @@ impl CurvefeverApp {
                         Align2::RIGHT_TOP,
                         other_name,
                         font.clone(),
-                        *other_color,
+                        other_color.with_alpha(FEED_ALPHA),
                     );
+                    let max = text_rect.right_bottom();
 
                     let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
                     let text_rect = self.text(
@@ -657,22 +685,34 @@ impl CurvefeverApp {
                         Align2::RIGHT_TOP,
                         "crashed into",
                         font.clone(),
-                        Color32::from_gray(240),
+                        FEED_TEXT_COLOR,
                     );
 
                     let message_pos = text_rect.left_top() - MESSAGE_OFFSET;
-                    self.text(
+                    let text_rect = self.text(
                         painter,
                         message_pos,
                         Align2::RIGHT_TOP,
                         crashed_name,
                         font,
-                        *crashed_color,
+                        crashed_color.with_alpha(FEED_ALPHA),
                     );
+                    let min = text_rect.left_top();
+                    Rect::from_min_max(min, max)
                 }
             };
 
-            message_pos.y += 20.0;
+            let stroke = Stroke::new(2.0, FEED_OUTLINE_COLOR);
+            self.set_rect(
+                painter,
+                outline_rect_idx,
+                outline_rect.expand(4.0),
+                Rounding::same(4.0),
+                FEED_BG_COLOR,
+                stroke,
+            );
+
+            message_pos.y += 30.0;
         }
 
         // countdown
@@ -758,5 +798,34 @@ impl CurvefeverApp {
         }
         path.stroke.width *= self.world_to_screen_scale;
         painter.add(Shape::Path(path));
+    }
+
+    fn set_rect(
+        &self,
+        painter: &Painter,
+        idx: ShapeIdx,
+        rect: Rect,
+        rounding: Rounding,
+        fill_color: Color32,
+        stroke: Stroke,
+    ) {
+        let shape = RectShape {
+            rect: self.wts_rect(rect),
+            rounding,
+            fill: fill_color,
+            stroke,
+        };
+        painter.set(idx, Shape::Rect(shape));
+    }
+}
+
+trait ColorExt {
+    fn with_alpha(&self, a: u8) -> Color32;
+}
+
+impl ColorExt for Color32 {
+    fn with_alpha(&self, a: u8) -> Color32 {
+        let (r, g, b, _) = self.to_tuple();
+        Color32::from_rgba_premultiplied(r, g, b, a)
     }
 }
