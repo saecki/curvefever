@@ -859,11 +859,10 @@ pub fn move_player(clock: &Clock, player: &mut Player) {
         .trail
         .last()
         .expect("There should be at least on trail section");
-    if player.direction != last_trail.dir() {
-        add_trail_section(player);
-    } else if player.gap() != last_trail.gap() {
-        add_trail_section(player);
-    } else if player.thickness() != last_trail.thickness() {
+    if player.direction != last_trail.dir()
+        || player.gap() != last_trail.gap()
+        || player.thickness() != last_trail.thickness()
+    {
         add_trail_section(player);
     } else if let TrailSection::Arc(s) = last_trail {
         if player.turning_radius() != s.radius {
@@ -921,7 +920,7 @@ fn add_trail_section(player: &mut Player) {
 
 fn random_player(name: String, left_key: Key, right_key: Key, others: &[Player]) -> Player {
     let mut rng = rand::thread_rng();
-    let pos = gen_player_position(&others);
+    let pos = gen_player_position(others);
     let angle = rng.gen_range(0.0..TAU);
     let color_idx = rng.gen_range(0..PLAYER_COLORS.len() - others.len());
     let color = PLAYER_COLORS
@@ -999,11 +998,12 @@ fn intersects_own_trail(player: &Player) -> bool {
         }
 
         if end_dist > min_dist {
-            if intersects_trail(
+            let intersects = intersects_trail(
                 player.pos,
                 0.5 * player.thickness(),
                 std::slice::from_ref(s),
-            ) {
+            );
+            if intersects {
                 return true;
             }
         }
@@ -1032,7 +1032,7 @@ fn intersects_trail(pos: Pos2, dist: f32, trail: &[TrailSection]) -> bool {
         }
     }
 
-    return false;
+    false
 }
 
 fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, dist: f32) -> bool {

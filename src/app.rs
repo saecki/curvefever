@@ -237,8 +237,8 @@ impl eframe::App for CurvefeverApp {
                     if input.key_pressed(Key::PlusEquals) {
                         self.world.add_player();
                     } else if input.key_pressed(Key::Minus) {
-                        self.world.remove_player(player_menu.player_index as usize);
-                        if player_menu.player_index as usize >= self.world.players.len() {
+                        self.world.remove_player(player_menu.player_index);
+                        if player_menu.player_index >= self.world.players.len() {
                             player_menu.player_index -= 1;
                         }
                     }
@@ -336,12 +336,11 @@ impl eframe::App for CurvefeverApp {
 impl CurvefeverApp {
     fn draw_player(&self, painter: &Painter, player: &Player) {
         // draw trail
-        let mut trail_iter = player.trail.iter().peekable();
         let mut trail_points = Vec::new();
-        let mut last_pos = trail_iter.peek().map_or(Pos2::ZERO, |s| s.start_pos());
-        let mut thickness = trail_iter.peek().map_or(0.0, |s| s.thickness());
+        let mut last_pos = player.trail.first().map_or(Pos2::ZERO, |s| s.start_pos());
+        let mut thickness = player.trail.first().map_or(0.0, |s| s.thickness());
         let mut push_start = true;
-        while let Some(s) = trail_iter.next() {
+        for s in player.trail.iter() {
             if s.gap() {
                 let color = player.color.color32();
                 self.draw_trail(painter, trail_points.clone(), thickness, color);
