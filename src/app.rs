@@ -372,7 +372,7 @@ impl CurvefeverApp {
         // draw player dot
         if !player.crashed && (player.gap() || player.trail.is_empty()) {
             let (r, g, b, _) = player.color.color32().to_tuple();
-            let a = if player.gap() { 20 } else { 255 };
+            let a = if player.gap() { 120 } else { 255 };
             let color = Color32::from_rgba_unmultiplied(r, g, b, a);
             self.circle_filled(painter, player.pos, 0.5 * player.thickness(), color);
         }
