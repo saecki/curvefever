@@ -1047,12 +1047,12 @@ fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, dist: f
     let inverse_center_line_angle = (center_line_angle + PI).rem_euclid(TAU);
 
     let outer_line_pos_1 = Pos2 {
-        x: s.start.x + (center_line_angle - FRAC_PI_2).cos() * 0.5 * s.thickness,
-        y: s.start.y + (center_line_angle - FRAC_PI_2).sin() * 0.5 * s.thickness,
+        x: s.start.x + (center_line_angle - FRAC_PI_2).cos() * (0.5 * s.thickness + dist),
+        y: s.start.y + (center_line_angle - FRAC_PI_2).sin() * (0.5 * s.thickness + dist),
     };
     let outer_line_pos_2 = Pos2 {
-        x: s.start.x - (center_line_angle - FRAC_PI_2).cos() * 0.5 * s.thickness,
-        y: s.start.y - (center_line_angle - FRAC_PI_2).sin() * 0.5 * s.thickness,
+        x: s.start.x - (center_line_angle - FRAC_PI_2).cos() * (0.5 * s.thickness + dist),
+        y: s.start.y - (center_line_angle - FRAC_PI_2).sin() * (0.5 * s.thickness + dist),
     };
 
     let max_dist = s.end.distance(outer_line_pos_1);
