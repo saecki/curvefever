@@ -312,7 +312,7 @@ impl eframe::App for CurvefeverApp {
                         painter,
                         rect,
                         Rounding::none(),
-                        Color32::from_black_alpha(100),
+                        Color32::from_black_alpha(180),
                     );
 
                     match &self.menu.state {
@@ -450,9 +450,9 @@ impl CurvefeverApp {
                     right_tip_angle.sin() * arrow_distance,
                 );
 
-            self.line_segment(painter, [base_start, base_end], stroke);
             self.line_segment(painter, [tip_left, base_end], stroke);
             self.line_segment(painter, [tip_right, base_end], stroke);
+            self.line_segment(painter, [base_start, base_end], stroke);
         }
     }
 
@@ -485,16 +485,91 @@ impl CurvefeverApp {
 
     fn draw_normal_menu(&self, painter: &Painter) {
         if let GameState::Stopped(_) = self.world.state {
-            let text = "SPACE : restart\nH : show help\nP : manage players\n";
-            let pos = (0.5 * WORLD_SIZE).to_pos2();
-            let font = FontId::new(20.0, FontFamily::Proportional);
+            const FONT: FontId = FontId::new(20.0, FontFamily::Proportional);
+            const BG_RECT_EXPAND: Vec2 = Vec2::new(6.0, 4.0);
+            let bg_rounding = Rounding::same(6.0);
+            const V_OFFSET: f32 = 40.0;
+            const H_OFFSET: f32 = 15.0;
+            let text_color = Color32::from_gray(200);
+            let key_bg_color = Color32::from_gray(48).with_alpha(160);
+            let center_pos = (0.5 * WORLD_SIZE).to_pos2();
+
+            let outline_rect_idx = painter.add(Shape::Noop);
+            let text_rect = self.text(
+                painter,
+                center_pos + Vec2::new(-H_OFFSET, -V_OFFSET),
+                Align2::RIGHT_CENTER,
+                "SPACE",
+                FONT,
+                text_color,
+            );
+            self.set_rect(
+                painter,
+                outline_rect_idx,
+                text_rect.expand2(BG_RECT_EXPAND),
+                bg_rounding,
+                key_bg_color,
+                Stroke::NONE,
+            );
             self.text(
                 painter,
-                pos,
-                Align2::CENTER_CENTER,
-                text,
-                font,
-                Color32::from_gray(200),
+                center_pos + Vec2::new(H_OFFSET, -V_OFFSET),
+                Align2::LEFT_CENTER,
+                "to restart",
+                FONT,
+                text_color,
+            );
+
+            let outline_rect_idx = painter.add(Shape::Noop);
+            let text_rect = self.text(
+                painter,
+                center_pos + Vec2::new(-H_OFFSET, 0.0),
+                Align2::RIGHT_CENTER,
+                "H",
+                FONT,
+                text_color,
+            );
+            self.set_rect(
+                painter,
+                outline_rect_idx,
+                text_rect.expand2(BG_RECT_EXPAND),
+                bg_rounding,
+                key_bg_color,
+                Stroke::NONE,
+            );
+            self.text(
+                painter,
+                center_pos + Vec2::new(H_OFFSET, 0.0),
+                Align2::LEFT_CENTER,
+                "for help",
+                FONT,
+                text_color,
+            );
+
+            let outline_rect_idx = painter.add(Shape::Noop);
+            let text_rect = self.text(
+                painter,
+                center_pos + Vec2::new(-H_OFFSET, V_OFFSET),
+                Align2::RIGHT_CENTER,
+                "P",
+                FONT,
+                text_color,
+            );
+            self.set_rect(
+                painter,
+                outline_rect_idx,
+                text_rect.expand2(BG_RECT_EXPAND),
+                bg_rounding,
+                key_bg_color,
+                Stroke::NONE,
+            );
+            self.text(
+                painter,
+                center_pos + Vec2::new(H_OFFSET, V_OFFSET),
+                Align2::LEFT_CENTER,
+                "to manage players",
+                FONT,
+                text_color,
             );
         }
     }
@@ -594,22 +669,22 @@ impl CurvefeverApp {
         let y = (player_menu.player_index as f32 + 0.5) * FIELD_SIZE.y;
         let rect = Rect::from_min_size(Pos2::new(x, y), selection_size);
         let stroke = Stroke::new(4.0, color);
-        self.rect_stroke(painter, rect, Rounding::same(0.2 * FIELD_SIZE.y), stroke);
+        self.rect_stroke(painter, rect, Rounding::same(0.1 * FIELD_SIZE.y), stroke);
     }
 
     fn draw_hud(&self, painter: &Painter) {
         const HUD_FONT: FontId = FontId::new(14.0, FontFamily::Proportional);
-        const HUD_ALPHA: u8 = 80;
-        const HUD_TEXT_COLOR: Color32 = Color32::from_rgba_premultiplied(160, 160, 160, HUD_ALPHA);
-        const HUD_OUTLINE_COLOR: Color32 = Color32::from_rgba_premultiplied(80, 80, 80, HUD_ALPHA);
-        const HUD_BG_COLOR: Color32 = Color32::from_rgba_premultiplied(32, 32, 32, HUD_ALPHA);
-        const TEXT_OFFSET: Vec2 = Vec2::new(5.0, 0.0);
+        const HUD_ALPHA: u8 = 160;
+        let hud_rounding = Rounding::same(6.0);
+        let hud_text_color = Color32::from_gray(160).with_alpha(HUD_ALPHA);
+        let hud_bg_color = Color32::from_gray(48).with_alpha(HUD_ALPHA);
+        let text_offset = Vec2::new(5.0, 0.0);
 
         for (index, p) in self.world.players.iter().enumerate() {
             // player name and score
             let outline_rect_idx = painter.add(Shape::Noop);
 
-            let text_pos = Pos2::new(10.0, 10.0 + index as f32 * 30.0);
+            let text_pos = Pos2::new(20.0, 20.0 + index as f32 * 30.0);
             let text_rect = self.text(
                 painter,
                 text_pos,
@@ -620,14 +695,14 @@ impl CurvefeverApp {
             );
             let min = text_pos;
 
-            let text_pos = text_rect.right_top() + TEXT_OFFSET;
+            let text_pos = text_rect.right_top() + text_offset;
             let text_rect = self.text(
                 painter,
                 text_pos,
                 Align2::LEFT_TOP,
                 p.score,
                 HUD_FONT,
-                HUD_TEXT_COLOR,
+                hud_text_color,
             );
             let mut max = text_rect.right_bottom();
 
@@ -660,19 +735,18 @@ impl CurvefeverApp {
             }
 
             let outline_rect = Rect::from_min_max(min, max);
-            let stroke = Stroke::new(2.0, HUD_OUTLINE_COLOR);
             self.set_rect(
                 painter,
                 outline_rect_idx,
                 outline_rect.expand(4.0),
-                Rounding::same(4.0),
-                HUD_BG_COLOR,
-                stroke,
+                hud_rounding,
+                hud_bg_color,
+                Stroke::NONE,
             );
         }
 
         // crash feed
-        let mut text_pos = Pos2::new(WORLD_SIZE.x - 10.0, 10.0);
+        let mut text_pos = Pos2::new(WORLD_SIZE.x - 20.0, 20.0);
         for c in self.world.crash_feed.iter() {
             match self.world.state {
                 GameState::Starting(_) | GameState::Running(_) => {
@@ -694,11 +768,11 @@ impl CurvefeverApp {
                         Align2::RIGHT_TOP,
                         "crashed into themself",
                         HUD_FONT,
-                        HUD_TEXT_COLOR,
+                        hud_text_color,
                     );
                     let max = text_rect.right_bottom();
 
-                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
+                    let text_pos = text_rect.left_top() - text_offset;
                     let text_rect = self.text(
                         painter,
                         text_pos,
@@ -717,11 +791,11 @@ impl CurvefeverApp {
                         Align2::RIGHT_TOP,
                         "crashed into the wall",
                         HUD_FONT,
-                        HUD_TEXT_COLOR,
+                        hud_text_color,
                     );
                     let max = text_rect.right_bottom();
 
-                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
+                    let text_pos = text_rect.left_top() - text_offset;
                     let text_rect = self.text(
                         painter,
                         text_pos,
@@ -749,17 +823,17 @@ impl CurvefeverApp {
                     );
                     let max = text_rect.right_bottom();
 
-                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
+                    let text_pos = text_rect.left_top() - text_offset;
                     let text_rect = self.text(
                         painter,
                         text_pos,
                         Align2::RIGHT_TOP,
                         "crashed into",
                         HUD_FONT,
-                        HUD_TEXT_COLOR,
+                        hud_text_color,
                     );
 
-                    let text_pos = text_rect.left_top() - TEXT_OFFSET;
+                    let text_pos = text_rect.left_top() - text_offset;
                     let text_rect = self.text(
                         painter,
                         text_pos,
@@ -773,28 +847,29 @@ impl CurvefeverApp {
                 }
             };
 
-            let stroke = Stroke::new(2.0, HUD_OUTLINE_COLOR);
             self.set_rect(
                 painter,
                 outline_rect_idx,
                 outline_rect.expand(4.0),
-                Rounding::same(4.0),
-                HUD_BG_COLOR,
-                stroke,
+                hud_rounding,
+                hud_bg_color,
+                Stroke::NONE,
             );
 
             text_pos.y += 30.0;
         }
 
         // countdown and time
-        let time_pos = Pos2::new(0.5 * WORLD_SIZE.x, 10.0);
+        let time_pos = Pos2::new(0.5 * WORLD_SIZE.x, 20.0);
         let countdown_pos = (0.5 * WORLD_SIZE).to_pos2();
         let pos_anim_frac = painter.ctx().animate_bool_with_time(
             Id::new("countdown_time"),
             !matches!(self.world.state, GameState::Starting(_)),
-            0.15,
+            0.2,
         );
         let pos = countdown_pos.lerp(time_pos, pos_anim_frac);
+        let bg_alpha = (pos_anim_frac * HUD_ALPHA as f32).round() as u8;
+        dbg!(pos_anim_frac, bg_alpha);
 
         match self.world.state {
             GameState::Starting(start) => {
@@ -813,17 +888,29 @@ impl CurvefeverApp {
                     Align2::CENTER_CENTER,
                     text,
                     font,
-                    HUD_TEXT_COLOR,
+                    hud_text_color,
                 );
             }
             GameState::Running(start) | GameState::Paused(start) | GameState::Stopped(start) => {
+                let outline_rect_idx = painter.add(Shape::Noop);
+
                 let font = FontId::new(20.0, FontFamily::Monospace);
                 let duration = self.world.clock.now.duration_since(start).unwrap();
                 let total_secs = duration.as_secs();
                 let minutes = total_secs / 60;
                 let secs = total_secs % 60;
                 let text = format!("{minutes:02}:{secs:02}");
-                self.text(painter, pos, Align2::CENTER_TOP, text, font, HUD_TEXT_COLOR);
+                let text_rect =
+                    self.text(painter, pos, Align2::CENTER_TOP, text, font, hud_text_color);
+
+                self.set_rect(
+                    painter,
+                    outline_rect_idx,
+                    text_rect.expand2(Vec2::new(6.0, 4.0)),
+                    hud_rounding,
+                    Color32::from_gray(40).with_alpha(bg_alpha),
+                    Stroke::NONE,
+                );
             }
         }
     }
@@ -916,6 +1003,6 @@ trait ColorExt {
 impl ColorExt for Color32 {
     fn with_alpha(&self, a: u8) -> Color32 {
         let (r, g, b, _) = self.to_tuple();
-        Color32::from_rgba_premultiplied(r, g, b, a)
+        Color32::from_rgba_unmultiplied(r, g, b, a)
     }
 }
