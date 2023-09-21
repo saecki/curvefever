@@ -1,5 +1,6 @@
 use std::f32::consts::{PI, TAU};
-use std::time::Duration;
+use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::time::{Duration, Instant};
 
 use eframe::CreationContext;
 use egui::epaint::{PathShape, RectShape};
@@ -11,13 +12,14 @@ use egui::{
 
 use crate::world::{
     CrashMessage, GameState, Item, Player, TrailSection, TurnDirection, World, BASE_THICKNESS,
-    ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, WORLD_SIZE,
+    ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
 };
 
 pub const PLAYER_MENU_FIELDS: usize = 3;
 
 pub struct CurvefeverApp {
-    world: World,
+    bg_thread: Option<std::thread::JoinHandle<()>>,
+    world: Arc<RwLock<World>>,
     menu: Menu,
     world_to_screen_offset: Vec2,
     world_to_screen_scale: f32,
@@ -106,9 +108,37 @@ impl PlayerMenu {
 }
 
 impl CurvefeverApp {
-    pub fn new(_: &CreationContext) -> Self {
+    pub fn new(cc: &CreationContext) -> Self {
+        let ctx = cc.egui_ctx.clone();
+        let world = Arc::new(RwLock::new(World::new()));
+
+        let bg_world = Arc::clone(&world);
+        let bg_thread = std::thread::spawn(move || {
+            loop {
+                let start = Instant::now();
+                {
+                    let mut world = bg_world.write().unwrap();
+                    if !world.is_running {
+                        break;
+                    }
+                    world.update();
+                }
+
+                ctx.request_repaint();
+                let update_time = start.elapsed();
+                if update_time < UPDATE_TIME {
+                    let remaining = UPDATE_TIME - update_time;
+                    // println!("fast {}µs", duration.as_micros());
+                    std::thread::sleep(remaining);
+                } else {
+                    println!("slow {}µs", update_time.as_micros());
+                }
+            }
+        });
+
         Self {
-            world: World::new(),
+            bg_thread: Some(bg_thread),
+            world,
             menu: Menu::new(),
             world_to_screen_offset: Vec2::ZERO,
             world_to_screen_scale: 1.0,
@@ -118,149 +148,149 @@ impl CurvefeverApp {
 
 impl eframe::App for CurvefeverApp {
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
-        ctx.request_repaint();
+        ctx.input(|input| {
+            let mut world = self.world.write().unwrap();
 
-        self.world.update();
+            match &mut self.menu.state {
+                MenuState::Home => {
+                    for p in world.players.iter_mut() {
+                        p.left_down = input.key_down(p.left_key);
+                        p.right_down = input.key_down(p.right_key);
+                    }
 
-        ctx.input(|input| match &mut self.menu.state {
-            MenuState::Home => {
-                for p in self.world.players.iter_mut() {
-                    p.left_down = input.key_down(p.left_key);
-                    p.right_down = input.key_down(p.right_key);
+                    if input.key_pressed(Key::Escape) {
+                        world.toggle_pause();
+                    } else if input.key_pressed(Key::Space) {
+                        world.restart();
+                    } else if input.key_pressed(Key::H) {
+                        self.menu.state = MenuState::Help;
+                    } else if input.key_pressed(Key::P) {
+                        self.menu.state = MenuState::Player(PlayerMenu::default());
+                    }
                 }
-
-                if input.key_pressed(Key::Escape) {
-                    self.world.toggle_pause();
-                } else if input.key_pressed(Key::Space) {
-                    self.world.restart();
-                } else if input.key_pressed(Key::H) {
-                    self.menu.state = MenuState::Help;
-                } else if input.key_pressed(Key::P) {
-                    self.menu.state = MenuState::Player(PlayerMenu::default());
-                }
-            }
-            MenuState::Help => {
-                if input.key_pressed(Key::Escape) {
-                    self.menu.state = MenuState::Home;
-                }
-            }
-            MenuState::Player(player_menu) => {
-                if input.key_pressed(Key::Escape) {
-                    if player_menu.selection_active {
-                        player_menu.selection_active = false;
-                    } else {
+                MenuState::Help => {
+                    if input.key_pressed(Key::Escape) {
                         self.menu.state = MenuState::Home;
                     }
-                } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
-                    player_menu.selection_active = !player_menu.selection_active;
-                } else if player_menu.selection_active {
-                    match player_menu.field_index {
-                        0 => {
-                            for e in input.events.iter() {
-                                if let Event::Key {
-                                    key,
-                                    pressed: true,
-                                    modifiers,
-                                    ..
-                                } = e
-                                {
-                                    match key {
-                                        Key::ArrowLeft | Key::ArrowUp => {
-                                            self.world.players[player_menu.player_index]
-                                                .color
-                                                .prev();
+                }
+                MenuState::Player(player_menu) => {
+                    if input.key_pressed(Key::Escape) {
+                        if player_menu.selection_active {
+                            player_menu.selection_active = false;
+                        } else {
+                            self.menu.state = MenuState::Home;
+                        }
+                    } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
+                        player_menu.selection_active = !player_menu.selection_active;
+                    } else if player_menu.selection_active {
+                        match player_menu.field_index {
+                            0 => {
+                                for e in input.events.iter() {
+                                    if let Event::Key {
+                                        key,
+                                        pressed: true,
+                                        modifiers,
+                                        ..
+                                    } = e
+                                    {
+                                        match key {
+                                            Key::ArrowLeft | Key::ArrowUp => {
+                                                world.players[player_menu.player_index]
+                                                    .color
+                                                    .prev();
+                                            }
+                                            Key::ArrowRight | Key::ArrowDown => {
+                                                world.players[player_menu.player_index]
+                                                    .color
+                                                    .next();
+                                            }
+                                            Key::Enter => {
+                                                player_menu.selection_active =
+                                                    !player_menu.selection_active;
+                                            }
+                                            Key::Backspace => {
+                                                world.players[player_menu.player_index].name.pop();
+                                            }
+                                            &k if (Key::A as u32..=Key::Z as u32)
+                                                .contains(&(k as u32)) =>
+                                            {
+                                                let char_offset = k as u32 - Key::A as u32;
+                                                let char = if modifiers.shift {
+                                                    'A' as u32 + char_offset
+                                                } else {
+                                                    'a' as u32 + char_offset
+                                                };
+                                                let char = char::from_u32(char).unwrap();
+                                                world.players[player_menu.player_index]
+                                                    .name
+                                                    .push(char);
+                                            }
+                                            &k if (Key::Num0 as u32..=Key::Num9 as u32)
+                                                .contains(&(k as u32)) =>
+                                            {
+                                                let char_offset = k as u32 - Key::Num0 as u32;
+                                                let char = '0' as u32 + char_offset;
+                                                let char = char::from_u32(char).unwrap();
+                                                world.players[player_menu.player_index]
+                                                    .name
+                                                    .push(char);
+                                            }
+                                            _ => (),
                                         }
-                                        Key::ArrowRight | Key::ArrowDown => {
-                                            self.world.players[player_menu.player_index]
-                                                .color
-                                                .next();
-                                        }
-                                        Key::Enter => {
-                                            player_menu.selection_active =
-                                                !player_menu.selection_active;
-                                        }
-                                        Key::Backspace => {
-                                            self.world.players[player_menu.player_index].name.pop();
-                                        }
-                                        &k if (Key::A as u32..=Key::Z as u32)
-                                            .contains(&(k as u32)) =>
-                                        {
-                                            let char_offset = k as u32 - Key::A as u32;
-                                            let char = if modifiers.shift {
-                                                'A' as u32 + char_offset
-                                            } else {
-                                                'a' as u32 + char_offset
-                                            };
-                                            let char = char::from_u32(char).unwrap();
-                                            self.world.players[player_menu.player_index]
-                                                .name
-                                                .push(char);
-                                        }
-                                        &k if (Key::Num0 as u32..=Key::Num9 as u32)
-                                            .contains(&(k as u32)) =>
-                                        {
-                                            let char_offset = k as u32 - Key::Num0 as u32;
-                                            let char = '0' as u32 + char_offset;
-                                            let char = char::from_u32(char).unwrap();
-                                            self.world.players[player_menu.player_index]
-                                                .name
-                                                .push(char);
-                                        }
-                                        _ => (),
                                     }
                                 }
                             }
-                        }
-                        1 => {
-                            for e in input.events.iter() {
-                                if let Event::Key {
-                                    key, pressed: true, ..
-                                } = e
-                                {
-                                    self.world.players[player_menu.player_index].left_key = *key;
+                            1 => {
+                                for e in input.events.iter() {
+                                    if let Event::Key {
+                                        key, pressed: true, ..
+                                    } = e
+                                    {
+                                        world.players[player_menu.player_index].left_key = *key;
+                                    }
                                 }
                             }
-                        }
-                        2 => {
-                            for e in input.events.iter() {
-                                if let Event::Key {
-                                    key, pressed: true, ..
-                                } = e
-                                {
-                                    self.world.players[player_menu.player_index].right_key = *key;
+                            2 => {
+                                for e in input.events.iter() {
+                                    if let Event::Key {
+                                        key, pressed: true, ..
+                                    } = e
+                                    {
+                                        world.players[player_menu.player_index].right_key = *key;
+                                    }
                                 }
                             }
+                            _ => (),
                         }
-                        _ => (),
-                    }
-                } else {
-                    if input.key_pressed(Key::PlusEquals) {
-                        self.world.add_player();
-                    } else if input.key_pressed(Key::Minus) {
-                        self.world.remove_player(player_menu.player_index);
-                        if player_menu.player_index >= self.world.players.len() {
-                            player_menu.player_index -= 1;
+                    } else {
+                        if input.key_pressed(Key::PlusEquals) {
+                            world.add_player();
+                        } else if input.key_pressed(Key::Minus) {
+                            world.remove_player(player_menu.player_index);
+                            if player_menu.player_index >= world.players.len() {
+                                player_menu.player_index -= 1;
+                            }
                         }
-                    }
 
-                    if input.key_pressed(Key::ArrowLeft) {
-                        player_menu.selection_left();
-                    } else if input.key_pressed(Key::ArrowRight) {
-                        player_menu.selection_right();
-                    } else if input.key_pressed(Key::ArrowUp) {
-                        player_menu.selection_up(self.world.players.len());
-                    } else if input.key_pressed(Key::ArrowDown) {
-                        player_menu.selection_down(self.world.players.len());
-                    }
+                        if input.key_pressed(Key::ArrowLeft) {
+                            player_menu.selection_left();
+                        } else if input.key_pressed(Key::ArrowRight) {
+                            player_menu.selection_right();
+                        } else if input.key_pressed(Key::ArrowUp) {
+                            player_menu.selection_up(world.players.len());
+                        } else if input.key_pressed(Key::ArrowDown) {
+                            player_menu.selection_down(world.players.len());
+                        }
 
-                    if input.key_pressed(Key::H) {
-                        player_menu.selection_left();
-                    } else if input.key_pressed(Key::L) {
-                        player_menu.selection_right();
-                    } else if input.key_pressed(Key::K) {
-                        player_menu.selection_up(self.world.players.len());
-                    } else if input.key_pressed(Key::J) {
-                        player_menu.selection_down(self.world.players.len());
+                        if input.key_pressed(Key::H) {
+                            player_menu.selection_left();
+                        } else if input.key_pressed(Key::L) {
+                            player_menu.selection_right();
+                        } else if input.key_pressed(Key::K) {
+                            player_menu.selection_up(world.players.len());
+                        } else if input.key_pressed(Key::J) {
+                            player_menu.selection_down(world.players.len());
+                        }
                     }
                 }
             }
@@ -290,51 +320,67 @@ impl eframe::App for CurvefeverApp {
                     Color32::from_gray(24),
                 );
 
-                for i in self.world.items.iter() {
+                let world = self.world.read().unwrap();
+                for i in world.items.iter() {
                     self.draw_item(painter, i);
                 }
-                for p in self.world.players.iter() {
-                    self.draw_player(painter, p);
+                for p in world.players.iter() {
+                    self.draw_player(painter, p, &world);
                 }
-                if self.world.wall_teleporting() {
+                if world.wall_teleporting() {
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
                     let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
                     self.rect_stroke(painter, rect, Rounding::none(), stroke);
                 }
 
-                if matches!(
-                    self.world.state,
-                    GameState::Paused(_) | GameState::Stopped(_)
-                ) {
+                if matches!(world.state, GameState::Paused(_) | GameState::Stopped(_)) {
                     // menu background
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
                     self.rect_filled(
                         painter,
                         rect,
                         Rounding::none(),
-                        Color32::from_black_alpha(180),
+                        Color32::from_black_alpha(80),
                     );
 
                     match &self.menu.state {
                         MenuState::Home => {
-                            self.draw_normal_menu(painter);
+                            self.draw_normal_menu(painter, &world);
                         }
                         MenuState::Help => {
                             self.draw_help_menu(painter);
                         }
                         MenuState::Player(player_menu) => {
-                            self.draw_player_menu(painter, player_menu);
+                            self.draw_player_menu(painter, player_menu, &world);
                         }
                     }
                 }
 
-                self.draw_hud(painter);
+                self.draw_hud(painter, &world);
             });
+    }
+
+    fn on_close_event(&mut self) -> bool {
+        // tell the bg thread to stop
+        {
+            let mut world = self.world.write().unwrap();
+            world.is_running = false;
+        }
+
+        // wait for it to stop
+        let bg_thread = self.bg_thread.take();
+        if let Some(t) = bg_thread {
+            if let Err(e) = t.join() {
+                println!("Error joining background thread: {e:?}");
+            }
+        }
+
+        true
     }
 }
 
 impl CurvefeverApp {
-    fn draw_player(&self, painter: &Painter, player: &Player) {
+    fn draw_player(&self, painter: &Painter, player: &Player, world: &RwLockReadGuard<World>) {
         // draw trail
         let mut trail_points = Vec::new();
         let mut last_pos = player.trail.first().map_or(Pos2::ZERO, |s| s.start_pos());
@@ -419,7 +465,7 @@ impl CurvefeverApp {
         }
 
         // draw arrow
-        if let GameState::Starting(_) = &self.world.state {
+        if let GameState::Starting(_) = world.state {
             let stroke = Stroke::new(0.3 * BASE_THICKNESS, Color32::from_gray(230));
 
             let start_distance = 10.0;
@@ -483,8 +529,8 @@ impl CurvefeverApp {
         self.circle_filled(painter, item.pos, ITEM_RADIUS, item.kind.color32());
     }
 
-    fn draw_normal_menu(&self, painter: &Painter) {
-        if let GameState::Stopped(_) = self.world.state {
+    fn draw_normal_menu(&self, painter: &Painter, world: &RwLockReadGuard<World>) {
+        if let GameState::Stopped(_) = world.state {
             const FONT: FontId = FontId::new(20.0, FontFamily::Proportional);
             const BG_RECT_EXPAND: Vec2 = Vec2::new(6.0, 4.0);
             let bg_rounding = Rounding::same(6.0);
@@ -596,13 +642,18 @@ impl CurvefeverApp {
         }
     }
 
-    fn draw_player_menu(&self, painter: &Painter, player_menu: &PlayerMenu) {
+    fn draw_player_menu(
+        &self,
+        painter: &Painter,
+        player_menu: &PlayerMenu,
+        world: &RwLockReadGuard<World>,
+    ) {
         const FIELD_SIZE: Vec2 = Vec2::new(
             WORLD_SIZE.x / 6.0,
             WORLD_SIZE.y / (PLAYER_COLORS.len() + 1) as f32,
         );
 
-        for (index, player) in self.world.players.iter().enumerate() {
+        for (index, player) in world.players.iter().enumerate() {
             //name
             let pos = Pos2::new(
                 0.5 * WORLD_SIZE.x - FIELD_SIZE.x,
@@ -672,7 +723,7 @@ impl CurvefeverApp {
         self.rect_stroke(painter, rect, Rounding::same(0.1 * FIELD_SIZE.y), stroke);
     }
 
-    fn draw_hud(&self, painter: &Painter) {
+    fn draw_hud(&self, painter: &Painter, world: &RwLockReadGuard<World>) {
         const HUD_FONT: FontId = FontId::new(14.0, FontFamily::Proportional);
         const HUD_ALPHA: u8 = 160;
         let hud_rounding = Rounding::same(6.0);
@@ -680,7 +731,7 @@ impl CurvefeverApp {
         let hud_bg_color = Color32::from_gray(48).with_alpha(HUD_ALPHA);
         let text_offset = Vec2::new(5.0, 0.0);
 
-        for (index, p) in self.world.players.iter().enumerate() {
+        for (index, p) in world.players.iter().enumerate() {
             // player name and score
             let outline_rect_idx = painter.add(Shape::Noop);
 
@@ -713,7 +764,7 @@ impl CurvefeverApp {
                     continue;
                 };
 
-                let now = self.world.clock.now;
+                let now = world.clock.now;
                 let passed_duration = now.duration_since(e.start).unwrap();
                 let ratio = 1.0 - passed_duration.as_secs_f32() / e.duration.as_secs_f32();
                 let num_points = ((20.0 * ratio).round() as u8).max(2);
@@ -747,11 +798,11 @@ impl CurvefeverApp {
 
         // crash feed
         let mut text_pos = Pos2::new(WORLD_SIZE.x - 20.0, 20.0);
-        for c in self.world.crash_feed.iter() {
-            match self.world.state {
+        for c in world.crash_feed.iter() {
+            match world.state {
                 GameState::Starting(_) | GameState::Running(_) => {
                     const CRASH_DISPLAY_DURATION: Duration = Duration::from_secs(5);
-                    let passed_duration = self.world.clock.now.duration_since(c.time).unwrap();
+                    let passed_duration = world.clock.now.duration_since(c.time).unwrap();
                     if passed_duration > CRASH_DISPLAY_DURATION {
                         continue;
                     }
@@ -864,22 +915,15 @@ impl CurvefeverApp {
         let countdown_pos = (0.5 * WORLD_SIZE).to_pos2();
         let pos_anim_frac = painter.ctx().animate_bool_with_time(
             Id::new("countdown_time"),
-            !matches!(self.world.state, GameState::Starting(_)),
+            !matches!(world.state, GameState::Starting(_)),
             0.2,
         );
         let pos = countdown_pos.lerp(time_pos, pos_anim_frac);
         let bg_alpha = (pos_anim_frac * HUD_ALPHA as f32).round() as u8;
-        dbg!(pos_anim_frac, bg_alpha);
 
-        match self.world.state {
+        match world.state {
             GameState::Starting(start) => {
-                let time = self
-                    .world
-                    .clock
-                    .now
-                    .duration_since(start)
-                    .unwrap()
-                    .as_secs();
+                let time = world.clock.now.duration_since(start).unwrap().as_secs();
                 let text = START_DELAY.as_secs() - time;
                 let font = FontId::new(80.0, FontFamily::Monospace);
                 self.text(
@@ -895,7 +939,7 @@ impl CurvefeverApp {
                 let outline_rect_idx = painter.add(Shape::Noop);
 
                 let font = FontId::new(20.0, FontFamily::Monospace);
-                let duration = self.world.clock.now.duration_since(start).unwrap();
+                let duration = world.clock.now.duration_since(start).unwrap();
                 let total_secs = duration.as_secs();
                 let minutes = total_secs / 60;
                 let secs = total_secs % 60;

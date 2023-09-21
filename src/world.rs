@@ -6,6 +6,8 @@ use rand::Rng;
 
 use curvefever_derive::EnumMembersArray;
 
+pub const UPDATE_TIME: Duration = Duration::from_nanos(1_000_000_000 / 240);
+
 pub const WORLD_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 pub const MIN_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
@@ -42,6 +44,7 @@ pub const SUM_OF_ITEM_SPAWN_RATES: u8 = {
 pub const PLAYER_COLORS: &[PlayerColor] = PlayerColor::members();
 
 pub struct World {
+    pub is_running: bool,
     pub clock: Clock,
     pub state: GameState,
     pub items: Vec<Item>,
@@ -66,6 +69,7 @@ impl World {
         let clock = Clock::new();
         let now = clock.now;
         Self {
+            is_running: true,
             clock,
             state: GameState::Stopped(now),
             items: Vec::new(),
@@ -106,7 +110,7 @@ impl Clock {
                 self.frame_delta = Duration::ZERO;
             }
             GameState::Starting(_) | GameState::Running(_) => {
-                self.frame_delta = now.duration_since(self.last_frame).unwrap();
+                self.frame_delta = UPDATE_TIME;
                 self.now += self.frame_delta;
             }
         }
