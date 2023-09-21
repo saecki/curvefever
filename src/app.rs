@@ -14,6 +14,7 @@ use crate::world::{
     CrashMessage, GameState, Item, Player, TrailSection, TurnDirection, World, BASE_THICKNESS,
     ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
 };
+use crate::{GameEvent, ServerEvent};
 
 pub const PLAYER_MENU_FIELDS: usize = 3;
 
@@ -108,19 +109,37 @@ impl PlayerMenu {
 }
 
 impl CurvefeverApp {
-    pub fn new(cc: &CreationContext) -> Self {
+    pub fn new(
+        cc: &CreationContext,
+        server_receiver: crossbeam::channel::Receiver<ServerEvent>,
+        _game_sender: crossbeam::channel::Sender<GameEvent>,
+    ) -> Self {
         let ctx = cc.egui_ctx.clone();
         let world = Arc::new(RwLock::new(World::new()));
 
         let bg_world = Arc::clone(&world);
         let bg_thread = std::thread::spawn(move || {
+            let mut start = Instant::now();
             loop {
-                let start = Instant::now();
                 {
                     let mut world = bg_world.write().unwrap();
                     if !world.is_running {
                         break;
                     }
+
+                    if let Ok(e) = server_receiver.try_recv() {
+                        match e {
+                            ServerEvent::Input {
+                                player_idx,
+                                left_down,
+                                right_down,
+                            } => {
+                                world.players[player_idx as usize].left_down = left_down;
+                                world.players[player_idx as usize].right_down = right_down;
+                            }
+                        }
+                    }
+
                     world.update();
                 }
 
@@ -133,6 +152,7 @@ impl CurvefeverApp {
                 } else {
                     println!("slow {}µs", update_time.as_micros());
                 }
+                start = Instant::now();
             }
         });
 

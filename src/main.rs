@@ -7,21 +7,29 @@ pub mod web;
 pub mod world;
 
 pub enum ServerEvent {
-    Input { player_idx: u8, left_down: bool, right_down: bool },
+    Input {
+        player_idx: u8,
+        left_down: bool,
+        right_down: bool,
+    },
 }
-pub enum GameEvent {}
+pub enum GameEvent {
+    Exit,
+}
 
 fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
         .build()
         .unwrap();
 
     std::thread::scope(|scope| {
         // start web server
-        let (server_send, server_recv) = std::sync::mpsc::channel();
-        let (game_send, game_recv) = std::sync::mpsc::channel();
+        let (server_kill_signal, server_kill_receiver) = tokio::sync::oneshot::channel();
+        let (server_sender, server_receiver) = crossbeam::channel::unbounded();
+        let (game_sender, game_receiver) = crossbeam::channel::unbounded();
         let server_handle = scope.spawn(|| {
-            web::start_server(&runtime, server_send, game_recv);
+            web::start_server(&runtime, server_sender, game_receiver, server_kill_receiver);
         });
 
         // start game
@@ -31,13 +39,20 @@ fn main() {
             // fullscreen: true,
             ..Default::default()
         };
+
+        let a_game_sender = game_sender.clone();
         let res = eframe::run_native(
             "curvefever",
             options,
-            Box::new(|c| Box::new(CurvefeverApp::new(c))),
+            Box::new(|c| Box::new(CurvefeverApp::new(c, server_receiver, a_game_sender))),
         );
         if let Err(e) = res {
             println!("error running app: {e}");
         }
+
+        // notify clients that the game is shutting down, and kill server
+        game_sender.send(GameEvent::Exit).unwrap();
+        server_kill_signal.send(()).unwrap();
+        server_handle.join().unwrap();
     });
 }
