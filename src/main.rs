@@ -6,7 +6,9 @@ pub mod app;
 pub mod web;
 pub mod world;
 
-pub enum ServerEvent {}
+pub enum ServerEvent {
+    Input { player_idx: u8, left_down: bool, right_down: bool },
+}
 pub enum GameEvent {}
 
 fn main() {
