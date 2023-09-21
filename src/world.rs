@@ -9,13 +9,14 @@ use curvefever_derive::EnumMembersArray;
 pub const UPDATE_TIME: Duration = Duration::from_nanos(1_000_000_000 / 240);
 
 pub const WORLD_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
-pub const MIN_WALL_DIST: f32 = 150.0;
+pub const MIN_PLAYER_WALL_DIST: f32 = 150.0;
 pub const MIN_PLAYER_DIST: f32 = 200.0;
+pub const MIN_ITEM_WALL_DIST: f32 = 40.0;
 pub const MIN_ITEM_DIST: f32 = 80.0;
 pub const ITEM_SPAWN_RATE: f32 = 0.48;
 pub const ITEM_RADIUS: f32 = 7.5;
 pub const START_DELAY: Duration = Duration::from_secs(2);
-pub const MAX_ITEMS: usize = 5;
+pub const MAX_ITEMS: usize = 8;
 pub const GAP_RATE: f32 = 0.4;
 
 pub const PLAYER_EFFECT_DURATION: Duration = Duration::from_secs(5);
@@ -163,15 +164,15 @@ impl ItemKind {
 
     pub const fn spawn_rate(&self) -> u8 {
         match self {
-            ItemKind::Speedup => 5,
-            ItemKind::Slowdown => 5,
-            ItemKind::FastTurning => 5,
-            ItemKind::SlowTurning => 5,
-            ItemKind::Expand => 5,
-            ItemKind::Shrink => 5,
+            ItemKind::Speedup => 4,
+            ItemKind::Slowdown => 4,
+            ItemKind::FastTurning => 4,
+            ItemKind::SlowTurning => 4,
+            ItemKind::Expand => 4,
+            ItemKind::Shrink => 4,
             ItemKind::Ghost => 1,
             ItemKind::NoGap => 3,
-            ItemKind::WallTeleporting => 5,
+            ItemKind::WallTeleporting => 4,
             ItemKind::Clear => 2,
         }
     }
@@ -758,7 +759,7 @@ impl World {
                                 ItemKind::Ghost => {
                                     p.effects.retain(|e| e.kind != PlayerEffect::NoGap);
                                     p.effects
-                                        .push(player_effect(&self.clock, PlayerEffect::Gap));
+                                        .push(player_effect(&self.clock, PlayerEffect::Ghost));
                                 }
                                 ItemKind::NoGap => {
                                     p.effects.retain(|e| e.kind != PlayerEffect::Gap);
@@ -941,8 +942,8 @@ fn gen_player_position(others: &[Player]) -> Pos2 {
 
     'outer: for _ in 0..1_000_000 {
         pos = Pos2 {
-            x: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.x - 2.0 * MIN_WALL_DIST)),
-            y: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.y - 2.0 * MIN_WALL_DIST)),
+            x: rng.gen_range(MIN_PLAYER_WALL_DIST..(WORLD_SIZE.x - MIN_PLAYER_WALL_DIST)),
+            y: rng.gen_range(MIN_PLAYER_WALL_DIST..(WORLD_SIZE.y - MIN_PLAYER_WALL_DIST)),
         };
 
         for o in others.iter() {
@@ -962,8 +963,8 @@ fn gen_item_position(players: &[Player], items: &[Item]) -> Option<Pos2> {
 
     'outer: for _ in 0..10_000 {
         let pos = Pos2 {
-            x: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.x - 2.0 * MIN_WALL_DIST)),
-            y: rng.gen_range(MIN_WALL_DIST..(WORLD_SIZE.y - 2.0 * MIN_WALL_DIST)),
+            x: rng.gen_range(MIN_ITEM_WALL_DIST..(WORLD_SIZE.x - MIN_ITEM_WALL_DIST)),
+            y: rng.gen_range(MIN_ITEM_WALL_DIST..(WORLD_SIZE.y - MIN_ITEM_WALL_DIST)),
         };
 
         for p in players.iter() {
