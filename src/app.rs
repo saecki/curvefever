@@ -5,8 +5,8 @@ use eframe::CreationContext;
 use egui::epaint::{PathShape, RectShape};
 use egui::layers::ShapeIdx;
 use egui::{
-    Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Key, Painter, Pos2,
-    Rect, Rounding, Shape, Stroke, Vec2,
+    Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Id, Key, Painter,
+    Pos2, Rect, Rounding, Shape, Stroke, Vec2,
 };
 
 use crate::world::{
@@ -287,7 +287,7 @@ impl eframe::App for CurvefeverApp {
                     painter,
                     Rect::from_min_size(Pos2::ZERO, WORLD_SIZE),
                     Rounding::none(),
-                    Color32::from_gray(50),
+                    Color32::from_gray(24),
                 );
 
                 for i in self.world.items.iter() {
@@ -524,7 +524,7 @@ impl CurvefeverApp {
     fn draw_player_menu(&self, painter: &Painter, player_menu: &PlayerMenu) {
         const FIELD_SIZE: Vec2 = Vec2::new(
             WORLD_SIZE.x / 6.0,
-            WORLD_SIZE.y / PLAYER_COLORS.len() as f32,
+            WORLD_SIZE.y / (PLAYER_COLORS.len() + 1) as f32,
         );
 
         for (index, player) in self.world.players.iter().enumerate() {
@@ -602,7 +602,7 @@ impl CurvefeverApp {
         const HUD_ALPHA: u8 = 80;
         const HUD_TEXT_COLOR: Color32 = Color32::from_rgba_premultiplied(160, 160, 160, HUD_ALPHA);
         const HUD_OUTLINE_COLOR: Color32 = Color32::from_rgba_premultiplied(80, 80, 80, HUD_ALPHA);
-        const HUD_BG_COLOR: Color32 = Color32::from_rgba_premultiplied(12, 12, 12, HUD_ALPHA);
+        const HUD_BG_COLOR: Color32 = Color32::from_rgba_premultiplied(32, 32, 32, HUD_ALPHA);
         const TEXT_OFFSET: Vec2 = Vec2::new(5.0, 0.0);
 
         for (index, p) in self.world.players.iter().enumerate() {
@@ -786,7 +786,16 @@ impl CurvefeverApp {
             text_pos.y += 30.0;
         }
 
-        // countdown
+        // countdown and time
+        let time_pos = Pos2::new(0.5 * WORLD_SIZE.x, 10.0);
+        let countdown_pos = (0.5 * WORLD_SIZE).to_pos2();
+        let pos_anim_frac = painter.ctx().animate_bool_with_time(
+            Id::new("countdown_time"),
+            !matches!(self.world.state, GameState::Starting(_)),
+            0.15,
+        );
+        let pos = countdown_pos.lerp(time_pos, pos_anim_frac);
+
         match self.world.state {
             GameState::Starting(start) => {
                 let time = self
@@ -797,7 +806,6 @@ impl CurvefeverApp {
                     .unwrap()
                     .as_secs();
                 let text = START_DELAY.as_secs() - time;
-                let pos = (0.5 * WORLD_SIZE).to_pos2();
                 let font = FontId::new(80.0, FontFamily::Monospace);
                 self.text(
                     painter,
@@ -809,7 +817,6 @@ impl CurvefeverApp {
                 );
             }
             GameState::Running(start) | GameState::Paused(start) | GameState::Stopped(start) => {
-                let pos = Pos2::new(0.5 * WORLD_SIZE.x, 10.0);
                 let font = FontId::new(20.0, FontFamily::Monospace);
                 let duration = self.world.clock.now.duration_since(start).unwrap();
                 let total_secs = duration.as_secs();
