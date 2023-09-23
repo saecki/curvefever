@@ -728,6 +728,7 @@ impl CurvefeverApp {
         const HUD_ALPHA: u8 = 160;
         let hud_rounding = Rounding::same(6.0);
         let hud_text_color = Color32::from_gray(160).with_alpha(HUD_ALPHA);
+        let hud_effect_bar_color = Color32::from_gray(100).with_alpha(HUD_ALPHA);
         let hud_bg_color = Color32::from_gray(48).with_alpha(HUD_ALPHA);
         let text_offset = Vec2::new(5.0, 0.0);
 
@@ -766,21 +767,43 @@ impl CurvefeverApp {
 
                 let now = world.clock.now;
                 let passed_duration = now.duration_since(e.start).unwrap();
-                let ratio = 1.0 - passed_duration.as_secs_f32() / e.duration.as_secs_f32();
-                let num_points = ((20.0 * ratio).round() as u8).max(2);
-                let angle_step = (ratio * TAU) / (num_points - 1) as f32;
-                let mut points = Vec::new();
-                let mut angle: f32 = 0.0;
-                for _ in 0..num_points {
-                    let pos = effect_pos + 6.0 * Vec2::new(angle.cos(), angle.sin());
-                    points.push(pos);
-                    angle += angle_step;
-                }
-                let color = item_kind.color32();
-                let stroke = Stroke::new(3.0, color.with_alpha(HUD_ALPHA));
-                let path = PathShape::line(points, stroke);
-                self.add_path(painter, path);
+                let ratio = passed_duration.as_secs_f32() / e.duration.as_secs_f32();
 
+                // effect arc
+                {
+                    let ratio = 1.0 - ratio;
+                    let num_points = ((20.0 * ratio).round() as u8).max(2);
+                    let angle_step = (ratio * TAU) / (num_points - 1) as f32;
+                    let mut points = Vec::new();
+                    let mut angle: f32 = 0.0;
+                    for _ in 0..num_points {
+                        let pos = effect_pos + 6.0 * Vec2::new(angle.cos(), angle.sin());
+                        points.push(pos);
+                        angle += angle_step;
+                    }
+                    let color = item_kind.color32();
+                    let stroke = Stroke::new(3.0, color.with_alpha(HUD_ALPHA));
+                    let path = PathShape::line(points, stroke);
+                    self.add_path(painter, path);
+                }
+
+                // grey arc
+                {
+                    let num_points = ((20.0 * ratio).round() as u8).max(2);
+                    let angle_step = (ratio * TAU) / (num_points - 1) as f32;
+                    let mut points = Vec::new();
+                    let mut angle: f32 = 0.0;
+                    for _ in 0..num_points {
+                        let pos = effect_pos + 6.0 * Vec2::new(angle.cos(), angle.sin());
+                        points.push(pos);
+                        angle -= angle_step;
+                    }
+                    let stroke = Stroke::new(3.0, hud_effect_bar_color);
+                    let path = PathShape::line(points, stroke);
+                    self.add_path(painter, path);
+                }
+
+                // update next pos
                 max.x = effect_pos.x + 10.0;
                 effect_pos.x += 20.0;
             }

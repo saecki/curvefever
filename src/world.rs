@@ -152,12 +152,12 @@ impl ItemKind {
             Self::Speedup => Color32::from_rgb(50, 60, 200),
             Self::Slowdown => Color32::from_rgb(220, 20, 50),
             Self::FastTurning => Color32::from_rgb(150, 40, 240),
-            Self::SlowTurning => Color32::from_rgb(30, 240, 220),
-            Self::Expand => Color32::from_rgb(220, 200, 0),
+            Self::SlowTurning => Color32::from_rgb(4, 174, 247),
+            Self::Expand => Color32::from_rgb(245, 210, 22),
             Self::Shrink => Color32::from_rgb(230, 120, 40),
-            Self::Ghost => Color32::from_gray(220),
-            Self::NoGap => Color32::from_gray(0),
-            Self::WallTeleporting => Color32::from_rgb(0, 230, 50),
+            Self::Ghost => Color32::from_gray(240),
+            Self::NoGap => Color32::from_rgb(4, 247, 136),
+            Self::WallTeleporting => Color32::from_rgb(162, 230, 50),
             Self::Clear => Color32::from_rgb(230, 40, 220),
         }
     }
