@@ -1,21 +1,25 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::ws::WebSocket;
+use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use tokio::runtime::Runtime;
 
 use crate::{GameEvent, ServerEvent};
 
 pub fn start_server(
-    runtime: &Runtime,
     server_sender: crossbeam::channel::Sender<ServerEvent>,
-    game_receiver: crossbeam::channel::Receiver<GameEvent>,
+    _game_receiver: crossbeam::channel::Receiver<GameEvent>,
     kill_signal: tokio::sync::oneshot::Receiver<()>,
 ) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
     runtime.block_on(async {
         let app = Router::new()
             .route("/join", get(ws_handler))
@@ -35,10 +39,7 @@ async fn ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(server_sender): State<Arc<Mutex<crossbeam::channel::Sender<ServerEvent>>>>,
 ) -> impl IntoResponse {
-    println!("+on_upgrade");
-    let r = ws.on_upgrade::<_, _>(move |socket| handle_socket(socket, addr, server_sender));
-    println!("-on_upgrade");
-    r
+    ws.on_upgrade::<_, _>(move |socket| handle_socket(socket, addr, server_sender))
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
@@ -59,25 +60,32 @@ async fn handle_socket(
 
     while let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
-            let data = msg.into_data();
-            if let Some(event) = parse_msg(&data) {
+            if let Some(event) = parse_msg(msg) {
                 server_sender.lock().unwrap().send(event).unwrap();
             }
         } else {
-            println!("client {who} abruptly disconnected");
+            tracing::info!("client {who} abruptly disconnected");
             return;
         }
     }
 }
 
-fn parse_msg(msg: &[u8]) -> Option<ServerEvent> {
+fn parse_msg(msg: Message) -> Option<ServerEvent> {
     const INPUT_EVENT_TYPE: u8 = 0x01;
-    if let &[INPUT_EVENT_TYPE, player_idx, left_down, right_down] = msg {
+
+    let Message::Binary(data) = msg else {
+        tracing::warn!("Expected binary message: {:?}", msg);
+        return None;
+    };
+
+    if let &[INPUT_EVENT_TYPE, player_idx, left_down, right_down] = data.as_slice() {
         return Some(ServerEvent::Input {
             player_idx,
             left_down: left_down != 0,
             right_down: right_down != 0,
         });
+    } else {
+        tracing::warn!("unknown message: {:?}", data.as_slice());
     }
 
     None

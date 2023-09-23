@@ -147,10 +147,10 @@ impl CurvefeverApp {
                 let update_time = start.elapsed();
                 if update_time < UPDATE_TIME {
                     let remaining = UPDATE_TIME - update_time;
-                    // println!("fast {}µs", duration.as_micros());
+                    tracing::trace!("fast {}µs", update_time.as_micros());
                     std::thread::sleep(remaining);
                 } else {
-                    println!("slow {}µs", update_time.as_micros());
+                    tracing::warn!("slow {}µs", update_time.as_micros());
                 }
                 start = Instant::now();
             }
@@ -391,7 +391,7 @@ impl eframe::App for CurvefeverApp {
         let bg_thread = self.bg_thread.take();
         if let Some(t) = bg_thread {
             if let Err(e) = t.join() {
-                println!("Error joining background thread: {e:?}");
+                tracing::error!("Error joining background thread: {e:?}");
             }
         }
 

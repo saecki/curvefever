@@ -1,4 +1,6 @@
 use eframe::NativeOptions;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use app::CurvefeverApp;
 
@@ -18,11 +20,12 @@ pub enum GameEvent {
 }
 
 fn main() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::from(
+            "egui=debug,curvefever=debug,tower_http=debug",
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     std::thread::scope(|scope| {
         // start web server
@@ -30,7 +33,7 @@ fn main() {
         let (server_sender, server_receiver) = crossbeam::channel::unbounded();
         let (game_sender, game_receiver) = crossbeam::channel::unbounded();
         let server_handle = scope.spawn(|| {
-            server::start_server(&runtime, server_sender, game_receiver, server_kill_receiver);
+            server::start_server(server_sender, game_receiver, server_kill_receiver);
         });
 
         // start game
