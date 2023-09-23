@@ -3,7 +3,7 @@ use eframe::NativeOptions;
 use app::CurvefeverApp;
 
 pub mod app;
-pub mod web;
+pub mod server;
 pub mod world;
 
 pub enum ServerEvent {
@@ -20,6 +20,7 @@ pub enum GameEvent {
 fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
+        .enable_time()
         .build()
         .unwrap();
 
@@ -29,7 +30,7 @@ fn main() {
         let (server_sender, server_receiver) = crossbeam::channel::unbounded();
         let (game_sender, game_receiver) = crossbeam::channel::unbounded();
         let server_handle = scope.spawn(|| {
-            web::start_server(&runtime, server_sender, game_receiver, server_kill_receiver);
+            server::start_server(&runtime, server_sender, game_receiver, server_kill_receiver);
         });
 
         // start game

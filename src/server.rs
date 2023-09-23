@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::WebSocket;
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
