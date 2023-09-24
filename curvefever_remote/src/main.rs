@@ -7,9 +7,14 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 
 const SERVER: &str = "ws://127.0.0.1:8910/join";
 
-#[tokio::main]
-async fn main() {
-    spawn_client().await;
+fn main() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(spawn_client());
 }
 
 async fn spawn_client() {

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
@@ -47,7 +49,6 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
     ws.on_upgrade(|socket| handle_socket(socket, state.server_sender, state.game_receiver))
 }
 
-/// Actual websocket statemachine (one will be spawned per connection)
 async fn handle_socket(
     socket: WebSocket,
     server_sender: crossbeam::channel::Sender<ServerEvent>,
@@ -101,7 +102,12 @@ async fn send_messages(
     game_receiver: crossbeam::channel::Receiver<GameEvent>,
 ) {
     loop {
-        let event = game_receiver.recv().unwrap();
+        let event = loop {
+            if let Ok(event) = game_receiver.try_recv() {
+                break event;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
         let msg = to_msg(event);
         let res = socket.send(msg).await;
         if let Err(e) = res {
