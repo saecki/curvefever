@@ -746,7 +746,7 @@ impl CurvefeverApp {
     fn draw_hud(&self, painter: &Painter, world: &RwLockReadGuard<World>) {
         const HUD_FONT: FontId = FontId::new(14.0, FontFamily::Proportional);
         const HUD_ALPHA: u8 = 160;
-        let hud_rounding = Rounding::same(6.0);
+        let hud_rounding = Rounding::same(8.0);
         let hud_text_color = Color32::from_gray(160).with_alpha(HUD_ALPHA);
         let hud_effect_bar_color = Color32::from_gray(100).with_alpha(HUD_ALPHA);
         let hud_bg_color = Color32::from_gray(48).with_alpha(HUD_ALPHA);
@@ -1069,10 +1069,15 @@ impl CurvefeverApp {
         painter: &Painter,
         idx: ShapeIdx,
         rect: Rect,
-        rounding: Rounding,
+        mut rounding: Rounding,
         fill_color: Color32,
-        stroke: Stroke,
+        mut stroke: Stroke,
     ) {
+        rounding.nw *= self.world_to_screen_scale;
+        rounding.ne *= self.world_to_screen_scale;
+        rounding.sw *= self.world_to_screen_scale;
+        rounding.se *= self.world_to_screen_scale;
+        stroke.width *= self.world_to_screen_scale;
         let shape = RectShape {
             rect: self.wts_rect(rect),
             rounding,
