@@ -3,17 +3,14 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use app::CurvefeverApp;
+use world::Direction;
 
 pub mod app;
 pub mod server;
 pub mod world;
 
 pub enum ServerEvent {
-    Input {
-        player_idx: u8,
-        left_down: bool,
-        right_down: bool,
-    },
+    Input { player_idx: u8, dir: Direction },
 }
 pub enum GameEvent {
     Exit,

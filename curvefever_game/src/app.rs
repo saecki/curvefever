@@ -11,8 +11,8 @@ use egui::{
 };
 
 use crate::world::{
-    CrashMessage, GameState, Item, Player, TrailSection, TurnDirection, World, BASE_THICKNESS,
-    ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
+    CrashMessage, Direction, GameState, Item, Player, TrailSection, TurnDirection, World,
+    BASE_THICKNESS, ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
 };
 use crate::{GameEvent, ServerEvent};
 
@@ -129,13 +129,8 @@ impl CurvefeverApp {
 
                     if let Ok(e) = server_receiver.try_recv() {
                         match e {
-                            ServerEvent::Input {
-                                player_idx,
-                                left_down,
-                                right_down,
-                            } => {
-                                world.players[player_idx as usize].left_down = left_down;
-                                world.players[player_idx as usize].right_down = right_down;
+                            ServerEvent::Input { player_idx, dir } => {
+                                world.players[player_idx as usize].remote_direction = dir;
                             }
                         }
                     }
@@ -174,8 +169,13 @@ impl eframe::App for CurvefeverApp {
             match &mut self.menu.state {
                 MenuState::Home => {
                     for p in world.players.iter_mut() {
-                        p.left_down = input.key_down(p.left_key);
-                        p.right_down = input.key_down(p.right_key);
+                        let left_down = input.key_down(p.left_key);
+                        let right_down = input.key_down(p.right_key);
+                        p.local_direction = match (left_down, right_down) {
+                            (true, true) | (false, false) => Direction::Straight,
+                            (true, false) => Direction::Left,
+                            (false, true) => Direction::Right,
+                        };
                     }
 
                     if input.key_pressed(Key::Escape) {

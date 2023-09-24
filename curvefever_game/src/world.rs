@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use egui::{Color32, Key, Pos2, Vec2};
 use rand::Rng;
 
-use curvefever_derive::EnumMembersArray;
+use curvefever_derive::{EnumMembersArray, EnumTryFromRepr};
 
 pub const UPDATE_TIME: Duration = Duration::from_nanos(1_000_000_000 / 240);
 
@@ -242,9 +242,8 @@ pub struct Player {
     pub effects: Vec<Effect<PlayerEffect>>,
     pub left_key: Key,
     pub right_key: Key,
-    pub left_down: bool,
-    pub right_down: bool,
-    direction: Direction,
+    pub local_direction: Direction,
+    pub remote_direction: Direction,
     pub just_crashed: bool,
     pub crashed: bool,
     pub score: u16,
@@ -267,10 +266,9 @@ impl Player {
             color,
             left_key,
             right_key,
-            left_down: false,
-            right_down: false,
             effects: Vec::new(),
-            direction: Direction::Straight,
+            local_direction: Direction::Straight,
+            remote_direction: Direction::Straight,
             just_crashed: false,
             crashed: false,
             score: 0,
@@ -283,12 +281,10 @@ impl Player {
         self.angle = rng.gen_range(0.0..TAU);
         self.effects.clear();
         self.trail.clear();
-        self.direction = Direction::Straight;
+        self.local_direction = Direction::Straight;
+        self.remote_direction = Direction::Straight;
         self.just_crashed = false;
         self.crashed = false;
-
-        self.left_down = false;
-        self.right_down = false;
     }
 
     pub fn gap(&self) -> bool {
@@ -299,6 +295,13 @@ impl Player {
 
     pub fn no_gap(&self) -> bool {
         self.effects.iter().any(|e| e.kind == PlayerEffect::NoGap)
+    }
+
+    fn direction(&self) -> Direction {
+        match self.local_direction {
+            Direction::Straight => self.remote_direction,
+            _ => self.local_direction,
+        }
     }
 
     fn speed(&self) -> f32 {
@@ -408,11 +411,12 @@ impl PlayerColor {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumTryFromRepr)]
+#[cods(repr = u8)]
 pub enum Direction {
-    Straight,
-    Right,
-    Left,
+    Straight = 0,
+    Right = 1,
+    Left = 2,
 }
 
 impl Direction {
@@ -577,11 +581,7 @@ impl World {
         match self.state {
             GameState::Starting(start_time) => {
                 for player in self.players.iter_mut() {
-                    let dir = match (player.left_down, player.right_down) {
-                        (true, true) | (false, false) => continue,
-                        (true, false) => TurnDirection::Left,
-                        (false, true) => TurnDirection::Right,
-                    };
+                    let Some(dir) = player.direction().turning_direction() else { continue };
                     let delta_time = self.clock.frame_delta.as_secs_f32();
                     player.angle +=
                         delta_time * BASE_SPEED / BASE_TURNING_RADIUS * dir.angle_sign();
@@ -849,12 +849,6 @@ impl World {
 }
 
 pub fn move_player(clock: &Clock, player: &mut Player) {
-    player.direction = match (player.left_down, player.right_down) {
-        (true, true) | (false, false) => Direction::Straight,
-        (true, false) => Direction::Left,
-        (false, true) => Direction::Right,
-    };
-
     if player.trail.is_empty() {
         add_trail_section(player);
         return;
@@ -864,7 +858,7 @@ pub fn move_player(clock: &Clock, player: &mut Player) {
         .trail
         .last()
         .expect("There should be at least on trail section");
-    if player.direction != last_trail.dir()
+    if player.direction() != last_trail.dir()
         || player.gap() != last_trail.gap()
         || player.thickness() != last_trail.thickness()
     {
@@ -900,7 +894,7 @@ fn update_trail_section(clock: &Clock, player: &mut Player) {
 }
 
 fn add_trail_section(player: &mut Player) {
-    match player.direction.turning_direction() {
+    match player.direction().turning_direction() {
         None => {
             let section =
                 StraightTrailSection::new(player.pos, player.gap(), player.thickness(), player.pos);

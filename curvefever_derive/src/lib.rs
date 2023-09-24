@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 
 struct Enum {
+    repr: Option<Ident>,
     vis: String,
     name: String,
     rename_all: Option<Case>,
@@ -28,6 +29,7 @@ enum Case {
 struct Member {
     ident: Ident,
     rename: Option<Literal>,
+    value: Option<Literal>,
 }
 
 fn expect_punct_like(tokens: &mut impl Iterator<Item = TokenTree>, punct: &str) {
@@ -41,6 +43,7 @@ fn parse_enum(input: TokenStream) -> Enum {
     let mut tokens = input.into_iter().peekable();
 
     let mut rename_all = None;
+    let mut repr = None;
     loop {
         match tokens.peek() {
             Some(TokenTree::Punct(p)) if p.to_string() == "#" => {
@@ -66,24 +69,37 @@ fn parse_enum(input: TokenStream) -> Enum {
                 };
 
                 match attribute_args.next() {
-                    Some(TokenTree::Ident(i)) if i.to_string() == "rename_all" => {
-                        expect_punct_like(&mut attribute_args, "=");
+                    Some(TokenTree::Ident(i)) => match i.to_string().as_str() {
+                        "repr" => {
+                            expect_punct_like(&mut attribute_args, "=");
 
-                        match attribute_args.next() {
-                            Some(TokenTree::Literal(l)) => {
-                                rename_all = match l.to_string().trim_matches('"') {
-                                    "camelCase" => Some(Case::Camel),
-                                    "PascalCase" => Some(Case::Pascal),
-                                    "snake_case" => Some(Case::Snake),
-                                    "SCREAMING_SNAKE_CASE" => Some(Case::ScreamingSnake),
-                                    "kebab-case" => Some(Case::Kebab),
-                                    "SCREAMING-KEBAB-CASE" => Some(Case::ScreamingKebab),
-                                    _ => panic!("unknown case"),
-                                };
+                            match attribute_args.next() {
+                                Some(TokenTree::Ident(i)) => {
+                                    repr = Some(i);
+                                }
+                                _ => panic!("expected repr type"),
                             }
-                            _ => panic!("expected rename literal"),
                         }
-                    }
+                        "rename_all" => {
+                            expect_punct_like(&mut attribute_args, "=");
+
+                            match attribute_args.next() {
+                                Some(TokenTree::Literal(l)) => {
+                                    rename_all = match l.to_string().trim_matches('"') {
+                                        "camelCase" => Some(Case::Camel),
+                                        "PascalCase" => Some(Case::Pascal),
+                                        "snake_case" => Some(Case::Snake),
+                                        "SCREAMING_SNAKE_CASE" => Some(Case::ScreamingSnake),
+                                        "kebab-case" => Some(Case::Kebab),
+                                        "SCREAMING-KEBAB-CASE" => Some(Case::ScreamingKebab),
+                                        _ => panic!("unknown case"),
+                                    };
+                                }
+                                _ => panic!("expected rename literal"),
+                            }
+                        }
+                        a => panic!("unexpected attribute: {a}"),
+                    },
                     Some(t) => panic!("unexpected token: {}", t),
                     None => (),
                 }
@@ -158,23 +174,30 @@ fn parse_enum(input: TokenStream) -> Enum {
             _ => None,
         };
 
-        match body.next() {
-            Some(TokenTree::Ident(ident)) => {
-                members.push(Member { ident, rename });
-            }
+        let ident = match body.next() {
+            Some(TokenTree::Ident(ident)) => ident,
             _ => panic!("expected enum variant name or attributes"),
-        }
+        };
 
+        let mut value = None;
         if let Some(TokenTree::Punct(p)) = body.peek() {
             if p.to_string() == "=" {
                 body.next();
 
                 match body.next() {
-                    Some(TokenTree::Literal(_)) => (),
+                    Some(TokenTree::Literal(l)) => {
+                        value = Some(l);
+                    }
                     _ => panic!("expected variant value after ="),
                 }
             }
         }
+
+        members.push(Member {
+            ident,
+            rename,
+            value,
+        });
 
         match body.next() {
             Some(TokenTree::Punct(p)) if p.to_string() == "," => (),
@@ -187,6 +210,7 @@ fn parse_enum(input: TokenStream) -> Enum {
         name,
         rename_all,
         members,
+        repr,
     }
 }
 
@@ -311,6 +335,43 @@ pub fn derive_from_str(input: TokenStream) -> TokenStream {
                 None => write!(output, "\"{m_ident}\" => Ok(Self::{m_ident}),"),
             },
         };
+    }
+
+    let _ = write!(output, "_ => Err(()),");
+
+    output.push_str("}}}");
+    output.parse().unwrap()
+}
+
+#[proc_macro_derive(EnumTryFromRepr, attributes(cods))]
+pub fn derive_try_from_repr(input: TokenStream) -> TokenStream {
+    let Enum {
+        name,
+        repr,
+        members,
+        ..
+    } = parse_enum(input);
+
+    let repr = match repr {
+        Some(s) => s.to_string(),
+        None => "compile_error!(\"no cods(repr = <repr>) defined\")".into(),
+    };
+
+    let mut output = format!(
+        "impl TryFrom<{repr}> for {name} {{
+            type Error = ();
+
+            fn try_from(input: {repr}) -> Result<Self, Self::Error> {{
+                match input {{"
+    );
+
+    for m in members {
+        let m_ident = m.ident;
+        let m_value = match m.value {
+            Some(s) => s.to_string(),
+            None => format!("compile_error!(\"no value defined for variant {m_ident}\")"),
+        };
+        let _ = write!(output, "{m_value} => Ok(Self::{m_ident}),");
     }
 
     let _ = write!(output, "_ => Err(()),");
