@@ -1,8 +1,7 @@
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
+use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
@@ -36,16 +35,14 @@ pub fn start_server(
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(server_sender): State<Arc<Mutex<crossbeam::channel::Sender<ServerEvent>>>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade::<_, _>(move |socket| handle_socket(socket, addr, server_sender))
+    ws.on_upgrade(|socket| handle_socket(socket, server_sender))
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
 async fn handle_socket(
     mut socket: WebSocket,
-    who: SocketAddr,
     server_sender: Arc<Mutex<crossbeam::channel::Sender<ServerEvent>>>,
 ) {
     //send a ping (unsupported by some browsers) just to kick things off and get a response
@@ -64,7 +61,7 @@ async fn handle_socket(
                 server_sender.lock().unwrap().send(event).unwrap();
             }
         } else {
-            tracing::info!("client {who} abruptly disconnected");
+            tracing::info!("client abruptly disconnected");
             return;
         }
     }
