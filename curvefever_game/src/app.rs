@@ -336,7 +336,7 @@ impl eframe::App for CurvefeverApp {
                 self.rect_filled(
                     painter,
                     Rect::from_min_size(Pos2::ZERO, WORLD_SIZE),
-                    Rounding::none(),
+                    Rounding::ZERO,
                     Color32::from_gray(24),
                 );
 
@@ -350,18 +350,13 @@ impl eframe::App for CurvefeverApp {
                 if world.wall_teleporting() {
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
                     let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
-                    self.rect_stroke(painter, rect, Rounding::none(), stroke);
+                    self.rect_stroke(painter, rect, Rounding::ZERO, stroke);
                 }
 
                 if matches!(world.state, GameState::Paused(_) | GameState::Stopped(_)) {
                     // menu background
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
-                    self.rect_filled(
-                        painter,
-                        rect,
-                        Rounding::none(),
-                        Color32::from_black_alpha(80),
-                    );
+                    self.rect_filled(painter, rect, Rounding::ZERO, Color32::from_black_alpha(80));
 
                     match &self.menu.state {
                         MenuState::Home => {
@@ -1078,12 +1073,7 @@ impl CurvefeverApp {
         rounding.sw *= self.world_to_screen_scale;
         rounding.se *= self.world_to_screen_scale;
         stroke.width *= self.world_to_screen_scale;
-        let shape = RectShape {
-            rect: self.wts_rect(rect),
-            rounding,
-            fill: fill_color,
-            stroke,
-        };
+        let shape = RectShape::new(self.wts_rect(rect), rounding, fill_color, stroke);
         painter.set(idx, Shape::Rect(shape));
     }
 }
