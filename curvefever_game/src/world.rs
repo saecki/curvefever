@@ -623,11 +623,11 @@ impl World {
 
                 // remove effects
                 for p in self.players.iter_mut() {
+                    p.effects.retain(|e| e.start + e.duration > self.clock.now);
+
                     if p.crashed {
                         continue;
                     }
-
-                    p.effects.retain(|e| e.start + e.duration > self.clock.now);
 
                     let weighted_range = self.clock.frame_delta.as_secs_f32() * GAP_RATE;
                     if !p.gap() && !p.no_gap() && rng.gen_range(0.0..=1.0) < weighted_range {
