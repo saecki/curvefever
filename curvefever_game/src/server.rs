@@ -6,6 +6,7 @@ use axum::routing::get;
 use axum::Router;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpListener;
 
 use crate::{GameEvent, ServerEvent};
 
@@ -35,9 +36,8 @@ pub fn start_server(
             .route("/join", get(ws_handler))
             .with_state(state);
 
-        let listener = axum::Server::bind(&"0.0.0.0:8910".parse().unwrap());
-        listener
-            .serve(app.into_make_service())
+        let listener = TcpListener::bind(&"0.0.0.0:8910").await.unwrap();
+        axum::serve(listener, app)
             .with_graceful_shutdown(async { kill_signal.await.unwrap() })
             .await
             .unwrap();

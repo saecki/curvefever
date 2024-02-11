@@ -1,4 +1,5 @@
 use eframe::NativeOptions;
+use egui::ViewportBuilder;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -36,7 +37,7 @@ fn main() {
         // start game
         let options = NativeOptions {
             follow_system_theme: true,
-            maximized: true,
+            viewport: ViewportBuilder::default().with_maximized(true),
             // fullscreen: true,
             ..Default::default()
         };

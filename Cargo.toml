@@ -9,9 +9,9 @@ members = [
 [workspace.dependencies]
 curvefever_derive = { path = "curvefever_derive" }
 
-egui = "0.23.0"
-eframe = "0.23.0"
-tokio = { version = "1.34.0", features = ["rt", "macros"] }
-axum = { version = "0.6.20", features = ["ws"] }
+egui = "0.26.1"
+eframe = "0.26.1"
+tokio = { version = "1.36.0", features = ["rt", "macros"] }
+axum = { version = "0.7.4", features = ["ws"] }
 async-channel = "2.2.0"
-futures-util = "0.3.29"
+futures-util = "0.3.30"

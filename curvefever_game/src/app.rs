@@ -284,7 +284,7 @@ impl eframe::App for CurvefeverApp {
                             _ => (),
                         }
                     } else {
-                        if input.key_pressed(Key::PlusEquals) {
+                        if input.key_pressed(Key::Equals) {
                             world.add_player();
                         } else if input.key_pressed(Key::Minus) {
                             world.remove_player(player_menu.player_index);
@@ -376,7 +376,7 @@ impl eframe::App for CurvefeverApp {
             });
     }
 
-    fn on_close_event(&mut self) -> bool {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // tell the bg thread to stop
         {
             let mut world = self.world.write().unwrap();
@@ -390,8 +390,6 @@ impl eframe::App for CurvefeverApp {
                 tracing::error!("Error joining background thread: {e:?}");
             }
         }
-
-        true
     }
 }
 
