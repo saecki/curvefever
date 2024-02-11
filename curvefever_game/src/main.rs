@@ -1,21 +1,14 @@
+use curvefever_common::GameEvent;
 use eframe::NativeOptions;
 use egui::ViewportBuilder;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use app::CurvefeverApp;
-use world::Direction;
 
 pub mod app;
 pub mod server;
 pub mod world;
-
-pub enum ServerEvent {
-    Input { player_idx: u8, dir: Direction },
-}
-pub enum GameEvent {
-    Exit,
-}
 
 fn main() {
     tracing_subscriber::registry()

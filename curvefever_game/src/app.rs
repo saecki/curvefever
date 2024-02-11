@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
+use curvefever_common::{ClientEvent, Direction, GameEvent};
 use eframe::CreationContext;
 use egui::epaint::{PathShape, RectShape};
 use egui::layers::ShapeIdx;
@@ -10,12 +11,12 @@ use egui::{
     Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Id, Key, Painter,
     Pos2, Rect, Rounding, Shape, Stroke, Vec2,
 };
+use qrcode::QrCode;
 
 use crate::world::{
-    CrashMessage, Direction, GameState, Item, Player, TrailSection, TurnDirection, World,
-    BASE_THICKNESS, ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
+    CrashMessage, GameState, Item, Player, TrailSection, TurnDirection, World, BASE_THICKNESS,
+    ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
 };
-use crate::{GameEvent, ServerEvent};
 
 pub const PLAYER_MENU_FIELDS: usize = 3;
 
@@ -25,6 +26,8 @@ pub struct CurvefeverApp {
     menu: Menu,
     world_to_screen_offset: Vec2,
     world_to_screen_scale: f32,
+    local_url: String,
+    qrcode: QrCode,
 }
 
 impl CurvefeverApp {
@@ -37,17 +40,27 @@ impl CurvefeverApp {
     }
 
     #[inline(always)]
+    fn wts_rect(&self, rect: Rect) -> Rect {
+        Rect::from_min_max(self.wts_pos(rect.min), self.wts_pos(rect.max))
+    }
+
+    #[inline(always)]
+    fn wts_rounding(&self, rounding: Rounding) -> Rounding {
+        Rounding {
+            nw: self.world_to_screen_scale * rounding.nw,
+            ne: self.world_to_screen_scale * rounding.ne,
+            sw: self.world_to_screen_scale * rounding.sw,
+            se: self.world_to_screen_scale * rounding.se,
+        }
+    }
+
+    #[inline(always)]
     fn stw_pos(&self, pos: Pos2) -> Pos2 {
         let pos = pos - self.world_to_screen_offset;
         Pos2::new(
             pos.x / self.world_to_screen_scale,
             pos.y / self.world_to_screen_scale,
         )
-    }
-
-    #[inline(always)]
-    fn wts_rect(&self, rect: Rect) -> Rect {
-        Rect::from_min_max(self.wts_pos(rect.min), self.wts_pos(rect.max))
     }
 
     #[inline(always)]
@@ -71,6 +84,7 @@ impl Menu {
 enum MenuState {
     Home,
     Help,
+    Join,
     Player(PlayerMenu),
 }
 
@@ -112,7 +126,7 @@ impl PlayerMenu {
 impl CurvefeverApp {
     pub fn new(
         cc: &CreationContext,
-        server_receiver: Receiver<ServerEvent>,
+        server_receiver: Receiver<ClientEvent>,
         _game_sender: Sender<GameEvent>,
     ) -> Self {
         let ctx = cc.egui_ctx.clone();
@@ -128,11 +142,17 @@ impl CurvefeverApp {
                         break;
                     }
 
-                    if let Ok(e) = server_receiver.try_recv() {
+                    while let Ok(e) = server_receiver.try_recv() {
                         match e {
-                            ServerEvent::Input { player_idx, dir } => {
-                                world.players[player_idx as usize].remote_direction = dir;
+                            ClientEvent::Input { player_id, dir } => {
+                                for p in world.players.iter_mut() {
+                                    if p.id == player_id {
+                                        p.remote_direction = dir;
+                                        break;
+                                    }
+                                }
                             }
+                            ClientEvent::ListPlayers => (),
                         }
                     }
 
@@ -152,12 +172,17 @@ impl CurvefeverApp {
             }
         });
 
+        let local_ip = local_ip_address::local_ip().unwrap();
+        let local_url = format!("http://{local_ip}:8910");
+        let qrcode = QrCode::new(&local_url).unwrap();
         Self {
             bg_thread: Some(bg_thread),
             world,
             menu: Menu::new(),
             world_to_screen_offset: Vec2::ZERO,
             world_to_screen_scale: 1.0,
+            local_url,
+            qrcode,
         }
     }
 }
@@ -172,11 +197,7 @@ impl eframe::App for CurvefeverApp {
                     for p in world.players.iter_mut() {
                         let left_down = input.key_down(p.left_key);
                         let right_down = input.key_down(p.right_key);
-                        p.local_direction = match (left_down, right_down) {
-                            (true, true) | (false, false) => Direction::Straight,
-                            (true, false) => Direction::Left,
-                            (false, true) => Direction::Right,
-                        };
+                        p.local_direction = Direction::from_left_right_down(left_down, right_down);
                     }
 
                     if input.key_pressed(Key::Escape) {
@@ -185,11 +206,18 @@ impl eframe::App for CurvefeverApp {
                         world.restart();
                     } else if input.key_pressed(Key::H) {
                         self.menu.state = MenuState::Help;
+                    } else if input.key_pressed(Key::J) {
+                        self.menu.state = MenuState::Join;
                     } else if input.key_pressed(Key::P) {
                         self.menu.state = MenuState::Player(PlayerMenu::default());
                     }
                 }
                 MenuState::Help => {
+                    if input.key_pressed(Key::Escape) {
+                        self.menu.state = MenuState::Home;
+                    }
+                }
+                MenuState::Join => {
                     if input.key_pressed(Key::Escape) {
                         self.menu.state = MenuState::Home;
                     }
@@ -365,6 +393,9 @@ impl eframe::App for CurvefeverApp {
                         }
                         MenuState::Help => {
                             self.draw_help_menu(painter);
+                        }
+                        MenuState::Join => {
+                            self.draw_join_menu(painter);
                         }
                         MenuState::Player(player_menu) => {
                             self.draw_player_menu(painter, player_menu, &world);
@@ -580,57 +611,39 @@ impl CurvefeverApp {
                 text_color,
             );
 
-            let outline_rect_idx = painter.add(Shape::Noop);
-            let text_rect = self.text(
-                painter,
-                center_pos + Vec2::new(-H_OFFSET, 0.0),
-                Align2::RIGHT_CENTER,
-                "H",
-                FONT,
-                text_color,
-            );
-            self.set_rect(
-                painter,
-                outline_rect_idx,
-                text_rect.expand2(BG_RECT_EXPAND),
-                bg_rounding,
-                key_bg_color,
-                Stroke::NONE,
-            );
-            self.text(
-                painter,
-                center_pos + Vec2::new(H_OFFSET, 0.0),
-                Align2::LEFT_CENTER,
-                "for help",
-                FONT,
-                text_color,
-            );
+            let hints = [
+                ("H", "for help"),
+                ("J", "for join"),
+                ("P", "to manage players"),
+            ];
 
-            let outline_rect_idx = painter.add(Shape::Noop);
-            let text_rect = self.text(
-                painter,
-                center_pos + Vec2::new(-H_OFFSET, V_OFFSET),
-                Align2::RIGHT_CENTER,
-                "P",
-                FONT,
-                text_color,
-            );
-            self.set_rect(
-                painter,
-                outline_rect_idx,
-                text_rect.expand2(BG_RECT_EXPAND),
-                bg_rounding,
-                key_bg_color,
-                Stroke::NONE,
-            );
-            self.text(
-                painter,
-                center_pos + Vec2::new(H_OFFSET, V_OFFSET),
-                Align2::LEFT_CENTER,
-                "to manage players",
-                FONT,
-                text_color,
-            );
+            for (i, (key, desc)) in hints.iter().enumerate() {
+                let outline_rect_idx = painter.add(Shape::Noop);
+                let text_rect = self.text(
+                    painter,
+                    center_pos + Vec2::new(-H_OFFSET, i as f32 * V_OFFSET),
+                    Align2::RIGHT_CENTER,
+                    key,
+                    FONT,
+                    text_color,
+                );
+                self.set_rect(
+                    painter,
+                    outline_rect_idx,
+                    text_rect.expand2(BG_RECT_EXPAND),
+                    bg_rounding,
+                    key_bg_color,
+                    Stroke::NONE,
+                );
+                self.text(
+                    painter,
+                    center_pos + Vec2::new(H_OFFSET, i as f32 * V_OFFSET),
+                    Align2::LEFT_CENTER,
+                    desc,
+                    FONT,
+                    text_color,
+                );
+            }
         }
     }
 
@@ -653,6 +666,65 @@ impl CurvefeverApp {
                 font,
                 Color32::from_gray(200),
             );
+        }
+    }
+
+    fn draw_join_menu(&self, painter: &Painter) {
+        let center: Pos2 = (WORLD_SIZE / 2.0).to_pos2();
+        let qrcode_size: Vec2 = Vec2::splat(WORLD_SIZE.min_elem() / 2.0);
+        let qrcode_pos: Pos2 = center - qrcode_size / 2.0;
+        let text_size: f32 = qrcode_size.y / 12.0;
+        let url_pos: Pos2 = center + Vec2::new(0.0, -qrcode_size.y / 2.0 - text_size);
+        let font = FontId::new(text_size, FontFamily::Proportional);
+
+        // url
+        {
+            const BG_RECT_EXPAND: Vec2 = Vec2::new(12.0, 8.0);
+            let bg_rounding = Rounding::same(6.0);
+            let bg_color = Color32::from_rgb(0x30, 0x40, 0x80).with_alpha(160);
+            let outline_rect_idx = painter.add(Shape::Noop);
+            let text_rect = self.text(
+                painter,
+                url_pos,
+                Align2::CENTER_BOTTOM,
+                &self.local_url,
+                font,
+                Color32::from_rgb(0x50, 0x80, 0xff).with_alpha(160),
+            );
+            self.set_rect(
+                painter,
+                outline_rect_idx,
+                text_rect.expand2(BG_RECT_EXPAND),
+                bg_rounding,
+                bg_color,
+                Stroke::NONE,
+            );
+        }
+
+        // qr code
+        const CODE_PADDING: usize = 3;
+        let num_cells = self.qrcode.width();
+        let cell_size = qrcode_size / (num_cells + 2 * CODE_PADDING) as f32;
+
+        let rect = Rect::from_min_size(qrcode_pos, qrcode_size);
+        self.rect_filled(
+            painter,
+            rect,
+            Rounding::same(2.0 * cell_size.y),
+            Color32::WHITE,
+        );
+
+        for y in 0..num_cells {
+            for x in 0..num_cells {
+                let color = self.qrcode[(x, y)];
+                if color != qrcode::Color::Dark {
+                    continue;
+                }
+                let offset = Vec2::new((CODE_PADDING + x) as f32, (CODE_PADDING + y) as f32);
+                let min = qrcode_pos + cell_size * offset;
+                let rect = Rect::from_min_size(min, cell_size);
+                self.pixel_perfect_rect_filled(painter, rect, Rounding::ZERO, Color32::BLACK);
+            }
         }
     }
 
@@ -1021,33 +1093,28 @@ impl CurvefeverApp {
         painter.line_segment(points, stroke);
     }
 
-    fn rect_stroke(
-        &self,
-        painter: &Painter,
-        rect: Rect,
-        mut rounding: Rounding,
-        mut stroke: Stroke,
-    ) {
-        rounding.nw *= self.world_to_screen_scale;
-        rounding.ne *= self.world_to_screen_scale;
-        rounding.sw *= self.world_to_screen_scale;
-        rounding.se *= self.world_to_screen_scale;
+    fn rect_stroke(&self, painter: &Painter, rect: Rect, rounding: Rounding, mut stroke: Stroke) {
         stroke.width *= self.world_to_screen_scale;
-        painter.rect_stroke(self.wts_rect(rect), rounding, stroke);
+        painter.rect_stroke(self.wts_rect(rect), self.wts_rounding(rounding), stroke);
     }
 
-    fn rect_filled(
+    fn rect_filled(&self, painter: &Painter, rect: Rect, rounding: Rounding, fill_color: Color32) {
+        painter.rect_filled(self.wts_rect(rect), self.wts_rounding(rounding), fill_color);
+    }
+
+    fn pixel_perfect_rect_filled(
         &self,
         painter: &Painter,
         rect: Rect,
-        mut rounding: Rounding,
+        rounding: Rounding,
         fill_color: Color32,
     ) {
-        rounding.nw *= self.world_to_screen_scale;
-        rounding.ne *= self.world_to_screen_scale;
-        rounding.sw *= self.world_to_screen_scale;
-        rounding.se *= self.world_to_screen_scale;
-        painter.rect_filled(self.wts_rect(rect), rounding, fill_color);
+        let rect = self.wts_rect(rect);
+        let pixel_perfect_rect = Rect {
+            min: painter.round_pos_to_pixels(rect.min),
+            max: painter.round_pos_to_pixels(rect.max),
+        };
+        painter.rect_filled(pixel_perfect_rect, self.wts_rounding(rounding), fill_color);
     }
 
     fn add_path(&self, painter: &Painter, mut path: PathShape) {
@@ -1063,16 +1130,17 @@ impl CurvefeverApp {
         painter: &Painter,
         idx: ShapeIdx,
         rect: Rect,
-        mut rounding: Rounding,
+        rounding: Rounding,
         fill_color: Color32,
         mut stroke: Stroke,
     ) {
-        rounding.nw *= self.world_to_screen_scale;
-        rounding.ne *= self.world_to_screen_scale;
-        rounding.sw *= self.world_to_screen_scale;
-        rounding.se *= self.world_to_screen_scale;
         stroke.width *= self.world_to_screen_scale;
-        let shape = RectShape::new(self.wts_rect(rect), rounding, fill_color, stroke);
+        let shape = RectShape::new(
+            self.wts_rect(rect),
+            self.wts_rounding(rounding),
+            fill_color,
+            stroke,
+        );
         painter.set(idx, Shape::Rect(shape));
     }
 }

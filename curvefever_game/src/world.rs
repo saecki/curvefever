@@ -1,10 +1,11 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::time::{Duration, SystemTime};
 
+use curvefever_common::Direction;
 use egui::{Color32, Key, Pos2, Vec2};
 use rand::Rng;
 
-use curvefever_derive::{EnumMembersArray, EnumTryFromRepr};
+use curvefever_derive::EnumMembersArray;
 
 pub const UPDATE_TIME: Duration = Duration::from_nanos(1_000_000_000 / 240);
 
@@ -45,6 +46,7 @@ pub const SUM_OF_ITEM_SPAWN_RATES: u8 = {
 pub const PLAYER_COLORS: &[PlayerColor] = PlayerColor::members();
 
 pub struct World {
+    next_id: u16,
     pub is_running: bool,
     pub clock: Clock,
     pub state: GameState,
@@ -56,20 +58,26 @@ pub struct World {
 
 impl World {
     pub fn new() -> Self {
+        let mut next_id = 0;
         let mut players = Vec::with_capacity(2);
         let player1 = random_player(
+            next_id,
             "Player1".to_string(),
             Key::ArrowLeft,
             Key::ArrowRight,
             &players,
         );
         players.push(player1);
-        let player2 = random_player("Player2".to_string(), Key::A, Key::D, &players);
+        next_id += 1;
+
+        let player2 = random_player(next_id, "Player2".to_string(), Key::A, Key::D, &players);
         players.push(player2);
+        next_id += 1;
 
         let clock = Clock::new();
         let now = clock.now;
         Self {
+            next_id,
             is_running: true,
             clock,
             state: GameState::Stopped(now),
@@ -234,6 +242,7 @@ pub enum WorldEffect {
 
 #[derive(Debug, PartialEq)]
 pub struct Player {
+    pub id: u16,
     pub name: String,
     pub trail: Vec<TrailSection>,
     pub pos: Pos2,
@@ -251,6 +260,7 @@ pub struct Player {
 
 impl Player {
     pub fn new(
+        id: u16,
         name: String,
         pos: Pos2,
         angle: f32,
@@ -259,6 +269,7 @@ impl Player {
         right_key: Key,
     ) -> Self {
         Self {
+            id,
             name,
             trail: Vec::new(),
             pos,
@@ -411,15 +422,11 @@ impl PlayerColor {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumTryFromRepr)]
-#[cods(repr = u8)]
-pub enum Direction {
-    Straight = 0,
-    Right = 1,
-    Left = 2,
+pub trait DirectionExt {
+    fn turning_direction(&self) -> Option<TurnDirection>;
 }
 
-impl Direction {
+impl DirectionExt for Direction {
     fn turning_direction(&self) -> Option<TurnDirection> {
         match self {
             Direction::Straight => None,
@@ -581,7 +588,9 @@ impl World {
         match self.state {
             GameState::Starting(start_time) => {
                 for player in self.players.iter_mut() {
-                    let Some(dir) = player.direction().turning_direction() else { continue };
+                    let Some(dir) = player.direction().turning_direction() else {
+                        continue;
+                    };
                     let delta_time = self.clock.frame_delta.as_secs_f32();
                     player.angle +=
                         delta_time * BASE_SPEED / BASE_TURNING_RADIUS * dir.angle_sign();
@@ -832,12 +841,19 @@ impl World {
         }
     }
 
+    pub fn next_id(&mut self) -> u16 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
     pub fn add_player(&mut self) {
         if self.players.len() >= PLAYER_COLORS.len() {
             return;
         }
+        let id = self.next_id();
         let name = format!("Player{}", self.players.len() + 1);
-        let player = random_player(name, Key::ArrowLeft, Key::ArrowRight, &self.players);
+        let player = random_player(id, name, Key::ArrowLeft, Key::ArrowRight, &self.players);
         self.players.push(player)
     }
 
@@ -917,7 +933,13 @@ fn add_trail_section(player: &mut Player) {
     }
 }
 
-fn random_player(name: String, left_key: Key, right_key: Key, others: &[Player]) -> Player {
+fn random_player(
+    id: u16,
+    name: String,
+    left_key: Key,
+    right_key: Key,
+    others: &[Player],
+) -> Player {
     let mut rng = rand::thread_rng();
     let pos = gen_player_position(others);
     let angle = rng.gen_range(0.0..TAU);
@@ -927,7 +949,8 @@ fn random_player(name: String, left_key: Key, right_key: Key, others: &[Player])
         .filter(|c| others.iter().all(|p| **c != p.color))
         .nth(color_idx)
         .unwrap();
-    Player::new(name, pos, angle, *color, left_key, right_key)
+
+    Player::new(id, name, pos, angle, *color, left_key, right_key)
 }
 
 fn gen_player_position(others: &[Player]) -> Pos2 {

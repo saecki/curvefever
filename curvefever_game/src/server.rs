@@ -4,20 +4,19 @@ use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
+use curvefever_common::{ClientEvent, GameEvent};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 
-use crate::{GameEvent, ServerEvent};
-
 #[derive(Clone)]
 struct AppState {
-    server_sender: Sender<ServerEvent>,
+    server_sender: Sender<ClientEvent>,
     game_receiver: Receiver<GameEvent>,
 }
 
 pub fn start_server(
-    server_sender: Sender<ServerEvent>,
+    server_sender: Sender<ClientEvent>,
     game_receiver: Receiver<GameEvent>,
     kill_signal: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -33,6 +32,7 @@ pub fn start_server(
             game_receiver,
         };
         let app = Router::new()
+            .route("/", get(root))
             .route("/join", get(ws_handler))
             .with_state(state);
 
@@ -44,13 +44,17 @@ pub fn start_server(
     });
 }
 
+async fn root(State(state): State<AppState>) -> impl IntoResponse {
+    // TODO: serve app
+}
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state.server_sender, state.game_receiver))
 }
 
 async fn handle_socket(
     socket: WebSocket,
-    server_sender: Sender<ServerEvent>,
+    server_sender: Sender<ClientEvent>,
     game_receiver: Receiver<GameEvent>,
 ) {
     let (sender, receiver) = socket.split();
@@ -59,11 +63,12 @@ async fn handle_socket(
     tokio::spawn(send_messages(sender, game_receiver));
 }
 
-async fn receive_messages(mut socket: SplitStream<WebSocket>, server_sender: Sender<ServerEvent>) {
+async fn receive_messages(mut socket: SplitStream<WebSocket>, server_sender: Sender<ClientEvent>) {
     while let Some(msg) = socket.next().await {
         if let Ok(msg) = msg {
             if let Some(event) = parse_msg(msg) {
                 server_sender.send(event).await.unwrap();
+                // TODO: respond to ListPlayers
             }
         } else {
             tracing::info!("client abruptly disconnected");
@@ -72,22 +77,18 @@ async fn receive_messages(mut socket: SplitStream<WebSocket>, server_sender: Sen
     }
 }
 
-fn parse_msg(msg: Message) -> Option<ServerEvent> {
-    const INPUT_EVENT_TYPE: u8 = 0x01;
-
+fn parse_msg(msg: Message) -> Option<ClientEvent> {
     let Message::Binary(data) = msg else {
         tracing::warn!("Expected binary message: {:?}", msg);
         return None;
     };
 
-    if let &[INPUT_EVENT_TYPE, player_idx, dir] = data.as_slice() {
-        let Ok(dir) = dir.try_into() else {
-            tracing::warn!("unknown direction: dir");
-            return None;
-        };
-        return Some(ServerEvent::Input { player_idx, dir });
-    } else {
-        tracing::warn!("unknown message: {:?}", data.as_slice());
+    let mut cursor = std::io::Cursor::new(&data);
+    match ClientEvent::decode(&mut cursor) {
+        Ok(e) => return Some(e),
+        Err(e) => {
+            tracing::warn!("Error decoding message `{:?}`:\n{e}", data.as_slice());
+        }
     }
 
     None
@@ -112,5 +113,6 @@ async fn send_messages(
 fn to_msg(event: GameEvent) -> Message {
     match event {
         GameEvent::Exit => todo!(),
+        GameEvent::PlayerList(_) => todo!(),
     }
 }
