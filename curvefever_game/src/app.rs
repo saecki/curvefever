@@ -2,6 +2,7 @@ use std::f32::consts::{PI, TAU};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
+use async_channel::{Receiver, Sender};
 use eframe::CreationContext;
 use egui::epaint::{PathShape, RectShape};
 use egui::layers::ShapeIdx;
@@ -111,8 +112,8 @@ impl PlayerMenu {
 impl CurvefeverApp {
     pub fn new(
         cc: &CreationContext,
-        server_receiver: crossbeam::channel::Receiver<ServerEvent>,
-        _game_sender: crossbeam::channel::Sender<GameEvent>,
+        server_receiver: Receiver<ServerEvent>,
+        _game_sender: Sender<GameEvent>,
     ) -> Self {
         let ctx = cc.egui_ctx.clone();
         let world = Arc::new(RwLock::new(World::new()));

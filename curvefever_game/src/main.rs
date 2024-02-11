@@ -27,8 +27,8 @@ fn main() {
     std::thread::scope(|scope| {
         // start web server
         let (server_kill_signal, server_kill_receiver) = tokio::sync::oneshot::channel();
-        let (server_sender, server_receiver) = crossbeam::channel::unbounded();
-        let (game_sender, game_receiver) = crossbeam::channel::unbounded();
+        let (server_sender, server_receiver) = async_channel::unbounded();
+        let (game_sender, game_receiver) = async_channel::unbounded();
         let server_handle = scope.spawn(|| {
             server::start_server(server_sender, game_receiver, server_kill_receiver);
         });
@@ -52,7 +52,7 @@ fn main() {
         }
 
         // notify clients that the game is shutting down, and kill server
-        game_sender.send(GameEvent::Exit).unwrap();
+        game_sender.send_blocking(GameEvent::Exit).unwrap();
         server_kill_signal.send(()).unwrap();
         server_handle.join().unwrap();
     });

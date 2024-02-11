@@ -9,7 +9,7 @@ egui = { workspace = true }
 eframe = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
-crossbeam = { workspace = true }
+async-channel = { workspace = true }
 futures-util = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

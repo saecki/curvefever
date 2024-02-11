@@ -1,5 +1,4 @@
-use std::time::Duration;
-
+use async_channel::{Receiver, Sender};
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
@@ -12,13 +11,13 @@ use crate::{GameEvent, ServerEvent};
 
 #[derive(Clone)]
 struct AppState {
-    server_sender: crossbeam::channel::Sender<ServerEvent>,
-    game_receiver: crossbeam::channel::Receiver<GameEvent>,
+    server_sender: Sender<ServerEvent>,
+    game_receiver: Receiver<GameEvent>,
 }
 
 pub fn start_server(
-    server_sender: crossbeam::channel::Sender<ServerEvent>,
-    game_receiver: crossbeam::channel::Receiver<GameEvent>,
+    server_sender: Sender<ServerEvent>,
+    game_receiver: Receiver<GameEvent>,
     kill_signal: tokio::sync::oneshot::Receiver<()>,
 ) {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -51,8 +50,8 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 
 async fn handle_socket(
     socket: WebSocket,
-    server_sender: crossbeam::channel::Sender<ServerEvent>,
-    game_receiver: crossbeam::channel::Receiver<GameEvent>,
+    server_sender: Sender<ServerEvent>,
+    game_receiver: Receiver<GameEvent>,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -60,14 +59,11 @@ async fn handle_socket(
     tokio::spawn(send_messages(sender, game_receiver));
 }
 
-async fn receive_messages(
-    mut socket: SplitStream<WebSocket>,
-    server_sender: crossbeam::channel::Sender<ServerEvent>,
-) {
+async fn receive_messages(mut socket: SplitStream<WebSocket>, server_sender: Sender<ServerEvent>) {
     while let Some(msg) = socket.next().await {
         if let Ok(msg) = msg {
             if let Some(event) = parse_msg(msg) {
-                server_sender.send(event).unwrap();
+                server_sender.send(event).await.unwrap();
             }
         } else {
             tracing::info!("client abruptly disconnected");
@@ -99,14 +95,11 @@ fn parse_msg(msg: Message) -> Option<ServerEvent> {
 
 async fn send_messages(
     mut socket: SplitSink<WebSocket, Message>,
-    game_receiver: crossbeam::channel::Receiver<GameEvent>,
+    game_receiver: Receiver<GameEvent>,
 ) {
     loop {
-        let event = loop {
-            if let Ok(event) = game_receiver.try_recv() {
-                break event;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        let Ok(event) = game_receiver.recv().await else {
+            break;
         };
         let msg = to_msg(event);
         let res = socket.send(msg).await;
