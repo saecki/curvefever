@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_channel::{Receiver, Sender};
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
@@ -9,10 +11,9 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 
-#[derive(Clone)]
 struct AppState {
     server_sender: Sender<ClientEvent>,
-    game_receiver: Receiver<GameEvent>,
+    clients: tokio::sync::RwLock<Vec<Sender<GameEvent>>>,
 }
 
 pub fn start_server(
@@ -27,10 +28,25 @@ pub fn start_server(
         .unwrap();
 
     runtime.block_on(async {
-        let state = AppState {
+        let state = Arc::new(AppState {
             server_sender,
-            game_receiver,
-        };
+            clients: tokio::sync::RwLock::new(Vec::new()),
+        });
+
+        let state_ref = Arc::clone(&state);
+        tokio::spawn(async move {
+            loop {
+                let msg = game_receiver.recv().await.unwrap();
+
+                {
+                    let clients = state_ref.clients.read().await;
+                    for c in clients.iter() {
+                        c.send(msg.clone()).await;
+                    }
+                }
+            }
+        });
+
         let app = Router::new()
             .route("/", get(root))
             .route("/join", get(ws_handler))
@@ -44,12 +60,19 @@ pub fn start_server(
     });
 }
 
-async fn root(State(state): State<AppState>) -> impl IntoResponse {
+async fn root(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: serve app
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state.server_sender, state.game_receiver))
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let (sender, receiver) = async_channel::unbounded();
+    {
+        let mut lock = state.clients.write().await;
+        lock.push(sender);
+    }
+
+    let server_sender = state.server_sender.clone();
+    ws.on_upgrade(move |socket| handle_socket(socket, server_sender, receiver))
 }
 
 async fn handle_socket(
@@ -68,7 +91,6 @@ async fn receive_messages(mut socket: SplitStream<WebSocket>, server_sender: Sen
         if let Ok(msg) = msg {
             if let Some(event) = parse_msg(msg) {
                 server_sender.send(event).await.unwrap();
-                // TODO: respond to ListPlayers
             }
         } else {
             tracing::info!("client abruptly disconnected");
@@ -111,8 +133,7 @@ async fn send_messages(
 }
 
 fn to_msg(event: GameEvent) -> Message {
-    match event {
-        GameEvent::Exit => todo!(),
-        GameEvent::PlayerList(_) => todo!(),
-    }
+    let mut buf = Vec::new();
+    event.encode(&mut buf).unwrap();
+    Message::Binary(buf)
 }

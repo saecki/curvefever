@@ -1,10 +1,15 @@
 use async_channel::{Receiver, Sender};
 use curvefever_common::{ClientEvent, Direction, GameEvent, Player};
 use eframe::CreationContext;
-use egui::{CentralPanel, Rect, Sense};
+use egui::{
+    Align, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, Margin, Rect, RichText,
+    Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
+};
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket};
 
 const SERVER_URL: &str = "ws://127.0.0.1:8910/join";
+
+const TEXT_SIZE: f32 = 20.0;
 
 fn main() {
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
@@ -29,6 +34,7 @@ fn main() {
 
 struct CurvefeverRemoteApp {
     player: Option<Player>,
+    players: Vec<Player>,
     client_sender: ClientSender,
     game_receiver: Receiver<GameEvent>,
 }
@@ -41,6 +47,7 @@ impl CurvefeverRemoteApp {
     ) -> Self {
         Self {
             player: None,
+            players: Vec::new(),
             client_sender,
             game_receiver,
         }
@@ -54,39 +61,199 @@ impl eframe::App for CurvefeverRemoteApp {
         if let Ok(msg) = self.game_receiver.try_recv() {
             match msg {
                 GameEvent::Exit => {
-                    // TODO: exit
+                    self.player = None;
                 }
                 GameEvent::PlayerList(players) => {
-                    dbg!(players);
+                    if let Some(current) = &self.player {
+                        // remove or update player
+                        self.player = players
+                            .iter()
+                            .find(|p| p.id == current.id)
+                            .map(Clone::clone);
+                    }
+                    self.players = players;
                 }
             }
         }
 
+        if let Some(player) = &self.player {
+            let left = self.draw_controls(ctx, player);
+            if left {
+                self.player = None;
+            }
+        } else {
+            self.draw_home(ctx);
+        }
+    }
+}
+
+impl CurvefeverRemoteApp {
+    fn draw_controls(&self, ctx: &egui::Context, player: &Player) -> bool {
+        let mut diconnect = false;
         let mut left_down = false;
         let mut right_down = false;
+        let mut restart = false;
+        ctx.input(|i| {
+            left_down |= i.key_down(Key::ArrowLeft);
+            right_down |= i.key_down(Key::ArrowRight);
+        });
+
         CentralPanel::default().show(ctx, |ui| {
-            ui.columns(2, |uis| {
+            ui.columns(3, |uis| {
                 {
                     let ui = &mut uis[0];
-                    let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
-                    let resp = ui.interact(rect, "left_touch".into(), Sense::click());
-                    left_down = resp.is_pointer_button_down_on();
+                    Frame::none()
+                        .rounding(Rounding::same(8.0))
+                        .fill(Color32::from_gray(0x18))
+                        .show(ui, |ui| {
+                            let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
+                            ui.allocate_ui_at_rect(rect, |ui| {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(RichText::new("right").size(32.0));
+                                });
+                            });
+                            let resp = ui.allocate_rect(rect, Sense::click_and_drag());
+                            left_down |= resp.is_pointer_button_down_on() | resp.dragged();
+                        });
                 }
                 {
                     let ui = &mut uis[1];
-                    let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
-                    let resp = ui.interact(rect, "right_touch".into(), Sense::click());
-                    right_down = resp.is_pointer_button_down_on();
+                    ui.vertical_centered(|ui| {
+                        Frame::none()
+                            .outer_margin(Margin::symmetric(0.0, 24.0))
+                            .show(ui, |ui| {
+                                let mut buf = String::from(&player.name);
+                                TextEdit::singleline(&mut buf)
+                                    .frame(false)
+                                    .horizontal_align(Align::Center)
+                                    .font(FontId::new(1.5 * TEXT_SIZE, FontFamily::Proportional))
+                                    .text_color(player_color(player))
+                                    .show(ui);
+
+                                if buf != player.name {
+                                    self.client_sender.send(ClientEvent::Rename {
+                                        player_id: player.id,
+                                        name: buf,
+                                    })
+                                }
+
+                                ui.add_space(8.0);
+
+                                if button(ui, RichText::new("disconnect").size(TEXT_SIZE)) {
+                                    diconnect = true;
+                                }
+                                if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
+                                    restart = true;
+                                }
+
+                                ui.columns(2, |uis| {
+                                    let ui = &mut uis[0];
+                                    if button(ui, RichText::new("prev color").size(TEXT_SIZE)) {
+                                        self.client_sender.send(ClientEvent::PrevColor {
+                                            player_id: player.id,
+                                        });
+                                    }
+                                    let ui = &mut uis[1];
+                                    if button(ui, RichText::new("next color").size(TEXT_SIZE)) {
+                                        self.client_sender.send(ClientEvent::NextColor {
+                                            player_id: player.id,
+                                        });
+                                    }
+                                });
+                            })
+                    });
+                }
+                {
+                    let ui = &mut uis[2];
+                    Frame::none()
+                        .rounding(Rounding::same(8.0))
+                        .fill(Color32::from_gray(0x18))
+                        .show(ui, |ui| {
+                            let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
+                            ui.allocate_ui_at_rect(rect, |ui| {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(RichText::new("right").size(32.0));
+                                });
+                            });
+                            let resp = ui.allocate_rect(rect, Sense::click_and_drag());
+                            right_down |= resp.is_pointer_button_down_on() | resp.dragged();
+                        });
                 }
             })
         });
 
         let dir = Direction::from_left_right_down(left_down, right_down);
-        let input_event = ClientEvent::Input { player_id: 0, dir };
+        let input_event = ClientEvent::Input {
+            player_id: player.id,
+            dir,
+        };
         self.client_sender.send(input_event);
+
+        if restart {
+            self.client_sender.send(ClientEvent::Restart);
+        }
+
+        diconnect
+    }
+
+    fn draw_home(&mut self, ctx: &egui::Context) {
+        CentralPanel::default().show(ctx, |ui| {
+            ui.columns(3, |uis| {
+                {
+                    let ui = &mut uis[0];
+                    let available_size = ui.available_size();
+                    let offset = Vec2::splat(8.0);
+                    let pos = ui.cursor().min + offset;
+                    let size = available_size - offset;
+                    let rect = Rect::from_min_size(pos, size);
+                    ui.allocate_ui_at_rect(rect, |ui| {
+                        let text = RichText::new("\u{27f3}").size(24.0);
+                        if ui.add(Button::new(text).frame(false)).clicked() {
+                            self.client_sender.send(ClientEvent::SyncPlayers);
+                        }
+                    });
+                }
+                {
+                    let ui = &mut uis[1];
+                    ui.vertical_centered(|ui| {
+                        Frame::none()
+                            .outer_margin(Margin::symmetric(0.0, 24.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
+                                ui.add_space(8.0);
+
+                                ScrollArea::vertical().show(ui, |ui| {
+                                    for p in self.players.iter() {
+                                        if button(ui, player_text(p).size(TEXT_SIZE)) {
+                                            self.player = Some(p.clone());
+                                        }
+                                    }
+                                })
+                            });
+                    });
+                }
+            });
+        });
     }
 }
 
+fn button(ui: &mut egui::Ui, text: impl Into<WidgetText>) -> bool {
+    ui.add_space(8.0);
+
+    let button_size = Vec2::new(ui.available_size().x, 2.0 * TEXT_SIZE);
+    let resp = ui.add_sized(button_size, Button::new(text).rounding(Rounding::same(8.0)));
+    resp.clicked()
+}
+
+fn player_text(player: &Player) -> RichText {
+    RichText::new(&player.name).color(player_color(player))
+}
+
+fn player_color(player: &Player) -> Color32 {
+    unsafe { std::mem::transmute(player.color) }
+}
+
+#[derive(Clone)]
 struct ClientSender {
     inner: WebSocket,
 }
@@ -111,11 +278,17 @@ fn start_websocket(sender: Sender<GameEvent>) -> Result<ClientSender, wasm_bindg
     let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
         if let Ok(buf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
             let array = js_sys::Uint8Array::new(&buf);
-            let len = array.byte_length() as usize;
             let bytes = array.to_vec();
-            todo!(
-                "parse and send message through sender: {sender:?}, len: {len}, bytes: {bytes:?} "
-            );
+            let mut cursor = std::io::Cursor::new(&bytes);
+            match GameEvent::decode(&mut cursor) {
+                Ok(msg) => {
+                    log::debug!("received message: {:?}", msg);
+                    sender.try_send(msg).unwrap();
+                }
+                Err(e) => {
+                    log::error!("Error decoding message:\n{}", e);
+                }
+            }
         } else if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
             log::debug!("message event, received Text: {:?}", txt);
         } else {
@@ -137,8 +310,10 @@ fn start_websocket(sender: Sender<GameEvent>) -> Result<ClientSender, wasm_bindg
     ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
     onclose_callback.forget();
 
+    let cloned_client = ClientSender { inner: ws.clone() };
     let onopen_callback = Closure::<dyn FnMut(_)>::new(move |e: Event| {
-        log::debug!("opopen, {:?}", e);
+        cloned_client.send(ClientEvent::SyncPlayers);
+        log::debug!("onopen, {:?}", e);
     });
     ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
     onopen_callback.forget();
