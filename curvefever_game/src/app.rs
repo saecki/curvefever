@@ -142,10 +142,11 @@ impl CurvefeverApp {
                         break;
                     }
 
+                    let mut players_invalidated = false;
                     while let Ok(e) = server_receiver.try_recv() {
                         match e {
                             ClientEvent::SyncPlayers => {
-                                sync_players(&bg_game_sender, &world.players);
+                                players_invalidated = true;
                             }
                             ClientEvent::Restart => {
                                 world.restart();
@@ -159,7 +160,7 @@ impl CurvefeverApp {
                                 if matches!(&world.state, GameState::Stopped(_)) {
                                     if let Some(p) = find_player(&mut world.players, player_id) {
                                         p.color.prev();
-                                        sync_players(&bg_game_sender, &world.players);
+                                        players_invalidated = true;
                                     }
                                 }
                             }
@@ -167,14 +168,14 @@ impl CurvefeverApp {
                                 if matches!(&world.state, GameState::Stopped(_)) {
                                     if let Some(p) = find_player(&mut world.players, player_id) {
                                         p.color.next();
-                                        sync_players(&bg_game_sender, &world.players);
+                                        players_invalidated = true;
                                     }
                                 }
                             }
                             ClientEvent::Rename { player_id, name } => {
                                 if let Some(p) = find_player(&mut world.players, player_id) {
                                     p.name = name;
-                                    sync_players(&bg_game_sender, &world.players);
+                                    players_invalidated = true;
                                 }
                             }
                             ClientEvent::Share => {
@@ -200,7 +201,6 @@ impl CurvefeverApp {
                             ClientEvent::AddPlayer { request_id } => {
                                 if matches!(&world.state, GameState::Stopped(_)) {
                                     if let Some(_) = world.add_player() {
-                                        sync_players(&bg_game_sender, &world.players);
                                         let player = player_dto(world.players.last().unwrap());
                                         let event = GameEvent::PlayerAdded { request_id, player };
                                         bg_game_sender.send_blocking(event).unwrap();
@@ -211,6 +211,10 @@ impl CurvefeverApp {
                     }
 
                     world.update();
+
+                    if players_invalidated {
+                        sync_players(&bg_game_sender, &world.players)
+                    }
                 }
 
                 ctx.request_repaint();
@@ -278,7 +282,7 @@ impl eframe::App for CurvefeverApp {
                     }
                 }
                 MenuState::Player(player_menu) => {
-                    let mut invalidated = false;
+                    let mut players_invalidated = false;
 
                     if input.key_pressed(Key::Escape) {
                         if player_menu.selection_active {
@@ -303,12 +307,12 @@ impl eframe::App for CurvefeverApp {
                                             Key::ArrowLeft | Key::ArrowUp => {
                                                 let idx = player_menu.player_index;
                                                 world.players[idx].color.prev();
-                                                invalidated = true;
+                                                players_invalidated = true;
                                             }
                                             Key::ArrowRight | Key::ArrowDown => {
                                                 let idx = player_menu.player_index;
                                                 world.players[idx].color.next();
-                                                invalidated = true;
+                                                players_invalidated = true;
                                             }
                                             Key::Enter => {
                                                 player_menu.selection_active =
@@ -316,7 +320,7 @@ impl eframe::App for CurvefeverApp {
                                             }
                                             Key::Backspace => {
                                                 world.players[player_menu.player_index].name.pop();
-                                                invalidated = true;
+                                                players_invalidated = true;
                                             }
                                             &k if (Key::A as u32..=Key::Z as u32)
                                                 .contains(&(k as u32)) =>
@@ -331,7 +335,7 @@ impl eframe::App for CurvefeverApp {
                                                 world.players[player_menu.player_index]
                                                     .name
                                                     .push(char);
-                                                invalidated = true;
+                                                players_invalidated = true;
                                             }
                                             &k if (Key::Num0 as u32..=Key::Num9 as u32)
                                                 .contains(&(k as u32)) =>
@@ -342,7 +346,7 @@ impl eframe::App for CurvefeverApp {
                                                 world.players[player_menu.player_index]
                                                     .name
                                                     .push(char);
-                                                invalidated = true;
+                                                players_invalidated = true;
                                             }
                                             _ => (),
                                         }
@@ -374,13 +378,13 @@ impl eframe::App for CurvefeverApp {
                     } else {
                         if input.key_pressed(Key::Equals) {
                             world.add_player();
-                            invalidated = true;
+                            players_invalidated = true;
                         } else if input.key_pressed(Key::Minus) {
                             world.remove_player(player_menu.player_index);
                             if player_menu.player_index >= world.players.len() {
                                 player_menu.player_index -= 1;
                             }
-                            invalidated = true;
+                            players_invalidated = true;
                         }
 
                         if input.key_pressed(Key::ArrowLeft) {
@@ -404,7 +408,7 @@ impl eframe::App for CurvefeverApp {
                         }
                     }
 
-                    if invalidated {
+                    if players_invalidated {
                         sync_players(&self.game_sender, &world.players);
                     }
                 }
