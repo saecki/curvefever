@@ -9,6 +9,7 @@ pub enum ClientEvent {
     NextColor { player_id: u16 },
     Rename { player_id: u16, name: String },
     Share,
+    Help,
     AddPlayer { request_id: u64 },
 }
 
@@ -20,7 +21,8 @@ impl ClientEvent {
     pub const TYPE_NEXT_COLOR: u8 = 5;
     pub const TYPE_RENAME: u8 = 6;
     pub const TYPE_SHARE: u8 = 7;
-    pub const TYPE_ADD_PLAYER: u8 = 8;
+    pub const TYPE_HELP: u8 = 8;
+    pub const TYPE_ADD_PLAYER: u8 = 9;
 
     pub fn encode(&self, stream: &mut impl std::io::Write) -> anyhow::Result<()> {
         match self {
@@ -50,6 +52,9 @@ impl ClientEvent {
             }
             ClientEvent::Share => {
                 stream.write_all(&[Self::TYPE_SHARE])?;
+            }
+            ClientEvent::Help => {
+                stream.write_all(&[Self::TYPE_HELP])?;
             }
             ClientEvent::AddPlayer { request_id } => {
                 stream.write_all(&[Self::TYPE_ADD_PLAYER])?;
@@ -88,6 +93,7 @@ impl ClientEvent {
                 ClientEvent::Rename { player_id, name }
             }
             Self::TYPE_SHARE => ClientEvent::Share,
+            Self::TYPE_HELP => ClientEvent::Help,
             Self::TYPE_ADD_PLAYER => {
                 let request_id = read_u64(stream)?;
                 ClientEvent::AddPlayer { request_id }

@@ -72,7 +72,7 @@ impl eframe::App for CurvefeverRemoteApp {
                 }
                 GameEvent::PlayerSync { players } => {
                     if let Some(current) = &self.player {
-                        // remove or update player
+                        // remove or update current player
                         self.player = players
                             .iter()
                             .find(|p| p.id == current.id)
@@ -83,6 +83,7 @@ impl eframe::App for CurvefeverRemoteApp {
                 GameEvent::PlayerAdded { request_id, player } => {
                     if self.add_request_id == Some(request_id) {
                         self.player = Some(player);
+                        request_fullscreen();
                     }
                 }
             }
@@ -104,8 +105,7 @@ impl CurvefeverRemoteApp {
         let mut back = false;
         let mut left_down = false;
         let mut right_down = false;
-        let mut restart = false;
-        let mut share = false;
+        let mut input_event = None;
         ctx.input(|i| {
             left_down |= i.key_down(Key::ArrowLeft);
             right_down |= i.key_down(Key::ArrowRight);
@@ -125,15 +125,16 @@ impl CurvefeverRemoteApp {
                                     ui.label(RichText::new("right").size(32.0));
                                 });
                             });
-                            let resp = ui.allocate_rect(rect, Sense::click_and_drag());
-                            left_down |= resp.is_pointer_button_down_on() | resp.dragged();
+                            let resp = ui.allocate_rect(rect, Sense::click());
+                            left_down |=
+                                resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
                         });
                 }
                 {
                     let ui = &mut uis[1];
                     ui.vertical_centered(|ui| {
                         Frame::none()
-                            .outer_margin(Margin::symmetric(0.0, 24.0))
+                            .outer_margin(Margin::symmetric(0.0, 16.0))
                             .show(ui, |ui| {
                                 let mut buf = String::from(&player.name);
                                 TextEdit::singleline(&mut buf)
@@ -156,10 +157,13 @@ impl CurvefeverRemoteApp {
                                     back = true;
                                 }
                                 if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
-                                    restart = true;
+                                    input_event = Some(ClientEvent::Restart);
                                 }
                                 if button(ui, RichText::new("share").size(TEXT_SIZE)) {
-                                    share = true;
+                                    input_event = Some(ClientEvent::Share);
+                                }
+                                if button(ui, RichText::new("help").size(TEXT_SIZE)) {
+                                    input_event = Some(ClientEvent::Help);
                                 }
 
                                 ui.columns(2, |uis| {
@@ -191,25 +195,22 @@ impl CurvefeverRemoteApp {
                                     ui.label(RichText::new("right").size(32.0));
                                 });
                             });
-                            let resp = ui.allocate_rect(rect, Sense::click_and_drag());
-                            right_down |= resp.is_pointer_button_down_on() | resp.dragged();
+                            let resp = ui.allocate_rect(rect, Sense::click());
+                            right_down |=
+                                resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
                         });
                 }
             })
         });
 
         let dir = Direction::from_left_right_down(left_down, right_down);
-        let input_event = ClientEvent::Input {
+        self.client_sender.send(ClientEvent::Input {
             player_id: player.id,
             dir,
-        };
-        self.client_sender.send(input_event);
+        });
 
-        if restart {
-            self.client_sender.send(ClientEvent::Restart);
-        }
-        if share {
-            self.client_sender.send(ClientEvent::Share);
+        if let Some(event) = input_event {
+            self.client_sender.send(event);
         }
 
         back
@@ -221,7 +222,7 @@ impl CurvefeverRemoteApp {
                 let ui = &mut uis[1];
                 ui.vertical_centered(|ui| {
                     Frame::none()
-                        .outer_margin(Margin::symmetric(0.0, 24.0))
+                        .outer_margin(Margin::symmetric(0.0, 16.0))
                         .show(ui, |ui| {
                             ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
                             ui.add_space(8.0);
@@ -237,6 +238,7 @@ impl CurvefeverRemoteApp {
                                 for p in self.players.iter() {
                                     if button(ui, player_text(p).size(TEXT_SIZE)) {
                                         self.player = Some(p.clone());
+                                        request_fullscreen();
                                     }
                                 }
                             })
@@ -245,6 +247,32 @@ impl CurvefeverRemoteApp {
             });
         });
     }
+}
+
+fn request_fullscreen() {
+    use wasm_bindgen::prelude::*;
+
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let element = document.document_element().unwrap();
+    element.request_fullscreen().unwrap();
+
+    let delayed = Closure::<dyn FnMut(_)>::new(|_: JsValue| {
+        let window = web_sys::window().unwrap();
+        let screen = window.screen().unwrap();
+        // TODO: is there an api that actually works?
+        let orientation = screen.orientation();
+        _ = orientation
+            .lock(web_sys::OrientationLockType::Landscape)
+            .unwrap();
+    });
+    window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            delayed.as_ref().unchecked_ref(),
+            200,
+        )
+        .unwrap();
+    delayed.forget();
 }
 
 fn button(ui: &mut egui::Ui, text: impl Into<WidgetText>) -> bool {
@@ -269,12 +297,12 @@ struct ClientSender {
 }
 
 impl ClientSender {
-    fn send(&self, msg: ClientEvent) {
-        let mut bytes = Vec::new();
-        msg.encode(&mut bytes).unwrap();
-        let res = self.inner.send_with_u8_array(&bytes);
+    fn send(&self, event: ClientEvent) {
+        let mut buf = Vec::new();
+        event.encode(&mut buf).expect("should always succeed");
+        let res = self.inner.send_with_u8_array(&buf);
         if let Err(e) = res {
-            log::error!("Error sending message `{msg:?}`:\n{e:?}");
+            log::error!("Error sending message `{event:?}`:\n{e:?}");
         }
     }
 }
@@ -294,31 +322,31 @@ fn start_websocket(
             let bytes = array.to_vec();
             let mut cursor = std::io::Cursor::new(&bytes);
             match GameEvent::decode(&mut cursor) {
-                Ok(msg) => {
-                    log::debug!("received message: {:?}", msg);
-                    sender.try_send(msg).unwrap();
+                Ok(event) => {
+                    log::debug!("Received game event: {event:?}");
+                    sender.try_send(event).unwrap();
                 }
                 Err(e) => {
-                    log::error!("Error decoding message:\n{}", e);
+                    log::error!("Error decoding message:\n{e}");
                 }
             }
         } else if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
-            log::debug!("message event, received Text: {:?}", txt);
+            log::debug!("Received Text message: {:?}", txt);
         } else {
-            log::debug!("message event, received Unknown: {:?}", e.data());
+            log::debug!("Received Unknown message: {:?}", e.data());
         }
     });
     ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
     onmessage_callback.forget();
 
     let onerror_callback = Closure::<dyn FnMut(_)>::new(move |e: ErrorEvent| {
-        log::error!("onerror: {:?}", e);
+        log::error!("onerror: {e:?}");
     });
     ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
     onerror_callback.forget();
 
     let onclose_callback = Closure::<dyn FnMut(_)>::new(move |e: CloseEvent| {
-        log::debug!("onclose: {:?}", e);
+        log::debug!("onclose: {e:?}");
     });
     ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
     onclose_callback.forget();
@@ -326,7 +354,7 @@ fn start_websocket(
     let cloned_client = ClientSender { inner: ws.clone() };
     let onopen_callback = Closure::<dyn FnMut(_)>::new(move |e: Event| {
         cloned_client.send(ClientEvent::SyncPlayers);
-        log::debug!("onopen, {:?}", e);
+        log::debug!("onopen, {e:?}");
     });
     ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
     onopen_callback.forget();

@@ -26,9 +26,13 @@ features = [
     "BinaryType",
     "Blob",
     "CloseEvent",
+    "Element",
     "ErrorEvent",
     "FileReader",
     "MessageEvent",
+    "OrientationLockType",
     "ProgressEvent",
+    "Screen",
+    "ScreenOrientation",
     "WebSocket",
 ]

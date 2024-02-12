@@ -12,6 +12,7 @@ use curvefever_common::{ClientEvent, GameEvent};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
 #[rustfmt::skip]
 mod files {
@@ -23,8 +24,22 @@ mod files {
 }
 
 struct AppState {
+    next_session_id: u64,
     server_sender: Sender<ClientEvent>,
-    clients: tokio::sync::RwLock<Vec<Sender<GameEvent>>>,
+    sessions: Vec<Session>,
+}
+
+impl AppState {
+    fn next_session_id(&mut self) -> u64 {
+        let id = self.next_session_id;
+        self.next_session_id += 1;
+        id
+    }
+}
+
+struct Session {
+    id: u64,
+    sender: Sender<GameEvent>,
 }
 
 pub fn start_server(
@@ -39,23 +54,25 @@ pub fn start_server(
         .unwrap();
 
     runtime.block_on(async {
-        let state = Arc::new(AppState {
+        let state = Arc::new(RwLock::new(AppState {
+            next_session_id: 0,
             server_sender,
-            clients: tokio::sync::RwLock::new(Vec::new()),
-        });
+            sessions: Vec::new(),
+        }));
 
         let state_ref = Arc::clone(&state);
         tokio::spawn(async move {
             loop {
-                let msg = game_receiver.recv().await.unwrap();
+                let Ok(event) = game_receiver.recv().await else {
+                    tracing::debug!("Exiting game message loop");
+                    break;
+                };
 
-                {
-                    let clients = state_ref.clients.read().await;
-                    for c in clients.iter() {
-                        let res = c.send(msg.clone()).await;
-                        if let Err(e) = res {
-                            tracing::error!("Error sending message to client:\n{}", e);
-                        }
+                let state = state_ref.read().await;
+                for c in state.sessions.iter() {
+                    let res = c.sender.send(event.clone()).await;
+                    if let Err(e) = res {
+                        tracing::error!("Error sending game event to client session:\n{e}");
                     }
                 }
             }
@@ -101,10 +118,13 @@ fn get_embedded_file<T>(
 where
     T: Clone + Send + Sync + 'static,
 {
-    get(move || async move { serve_embedded_file(content_type, bytes) })
+    get(move || serve_embedded_file(content_type, bytes))
 }
 
-fn serve_embedded_file(content_type: &'static str, bytes: &'static [u8]) -> impl IntoResponse {
+async fn serve_embedded_file(
+    content_type: &'static str,
+    bytes: &'static [u8],
+) -> impl IntoResponse {
     let body = Body::from(bytes);
     let mut resp = Response::new(body);
     let headers = resp.headers_mut();
@@ -113,59 +133,73 @@ fn serve_embedded_file(content_type: &'static str, bytes: &'static [u8]) -> impl
     resp
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<RwLock<AppState>>>,
+) -> impl IntoResponse {
     let (sender, receiver) = async_channel::unbounded();
+    let server_sender;
+    let id;
     {
-        let mut lock = state.clients.write().await;
-        lock.push(sender);
+        let mut state = state.write().await;
+        id = state.next_session_id();
+        state.sessions.push(Session { id, sender });
+        server_sender = state.server_sender.clone();
     }
+    tracing::debug!("Session with id {} connected", id);
 
-    let server_sender = state.server_sender.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, server_sender, receiver))
+    ws.on_upgrade(move |socket| handle_socket(id, state, socket, server_sender, receiver))
 }
 
 async fn handle_socket(
+    id: u64,
+    state: Arc<RwLock<AppState>>,
     socket: WebSocket,
     server_sender: Sender<ClientEvent>,
     game_receiver: Receiver<GameEvent>,
 ) {
     let (sender, receiver) = socket.split();
 
-    tokio::spawn(receive_messages(receiver, server_sender));
-    tokio::spawn(send_messages(sender, game_receiver));
+    tokio::spawn(receiver_task(id, state, receiver, server_sender));
+    tokio::spawn(sender_task(sender, game_receiver));
 }
 
-async fn receive_messages(mut socket: SplitStream<WebSocket>, server_sender: Sender<ClientEvent>) {
-    while let Some(msg) = socket.next().await {
-        if let Ok(msg) = msg {
-            if let Some(event) = parse_msg(msg) {
-                server_sender.send(event).await.unwrap();
+async fn receiver_task(
+    id: u64,
+    state: Arc<RwLock<AppState>>,
+    mut socket: SplitStream<WebSocket>,
+    server_sender: Sender<ClientEvent>,
+) {
+    while let Some(Ok(msg)) = socket.next().await {
+        let Message::Binary(data) = msg else {
+            tracing::warn!("Expected binary message: {:?}", msg);
+            continue;
+        };
+
+        let mut cursor = std::io::Cursor::new(&data);
+        let event = match ClientEvent::decode(&mut cursor) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("Error decoding message `{:?}`:\n{e}", data.as_slice());
+                continue;
             }
-        } else {
-            tracing::info!("client abruptly disconnected");
-            return;
-        }
-    }
-}
+        };
 
-fn parse_msg(msg: Message) -> Option<ClientEvent> {
-    let Message::Binary(data) = msg else {
-        tracing::warn!("Expected binary message: {:?}", msg);
-        return None;
-    };
-
-    let mut cursor = std::io::Cursor::new(&data);
-    match ClientEvent::decode(&mut cursor) {
-        Ok(e) => return Some(e),
-        Err(e) => {
-            tracing::warn!("Error decoding message `{:?}`:\n{e}", data.as_slice());
+        let res = server_sender.send(event).await;
+        if let Err(e) = res {
+            tracing::error!("Error sending client event to server:\n{e}");
         }
     }
 
-    None
+    let mut state = state.write().await;
+    if let Some(i) = state.sessions.iter().position(|s| s.id == id) {
+        tracing::debug!("Session with id {} disconnected", id);
+        let session = state.sessions.remove(i);
+        session.sender.close();
+    }
 }
 
-async fn send_messages(
+async fn sender_task(
     mut socket: SplitSink<WebSocket, Message>,
     game_receiver: Receiver<GameEvent>,
 ) {
@@ -173,16 +207,14 @@ async fn send_messages(
         let Ok(event) = game_receiver.recv().await else {
             break;
         };
-        let msg = to_msg(event);
+
+        let mut buf = Vec::new();
+        event.encode(&mut buf).expect("should always succeed");
+        let msg = Message::Binary(buf);
+
         let res = socket.send(msg).await;
         if let Err(e) = res {
-            tracing::warn!("Error sending game event: {e}");
+            tracing::warn!("Error sending game event to client socket: {e}");
         }
     }
-}
-
-fn to_msg(event: GameEvent) -> Message {
-    let mut buf = Vec::new();
-    event.encode(&mut buf).unwrap();
-    Message::Binary(buf)
 }

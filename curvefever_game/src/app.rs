@@ -1,4 +1,5 @@
 use std::f32::consts::{PI, TAU};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
@@ -186,6 +187,16 @@ impl CurvefeverApp {
                                     }
                                 }
                             }
+                            ClientEvent::Help => {
+                                if matches!(&world.state, GameState::Stopped(_)) {
+                                    let mut menu = bg_menu.write().unwrap();
+                                    if menu.state == MenuState::Help {
+                                        menu.state = MenuState::Home;
+                                    } else {
+                                        menu.state = MenuState::Help;
+                                    }
+                                }
+                            }
                             ClientEvent::AddPlayer { request_id } => {
                                 if matches!(&world.state, GameState::Stopped(_)) {
                                     if let Some(_) = world.add_player() {
@@ -215,9 +226,9 @@ impl CurvefeverApp {
             }
         });
 
-        let local_ip = local_ip_address::local_ip().unwrap();
+        let local_ip = local_ip_address::local_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
         let local_url = format!("http://{local_ip}:8910");
-        let qrcode = QrCode::new(&local_url).unwrap();
+        let qrcode = QrCode::new(&local_url).expect("code should always be valid");
         Self {
             bg_thread: Some(bg_thread),
             game_sender,
@@ -252,7 +263,6 @@ impl eframe::App for CurvefeverApp {
                         menu.state = MenuState::Help;
                     } else if input.key_pressed(Key::S) {
                         menu.state = MenuState::Share;
-
                     } else if input.key_pressed(Key::P) {
                         menu.state = MenuState::Player(PlayerMenu::default());
                     }
@@ -611,18 +621,14 @@ impl CurvefeverApp {
         thickness: f32,
         color: Color32,
     ) {
-        if trail_points.len() < 2 {
+        let [first, .., last] = &trail_points[..] else {
             return;
-        }
+        };
+
+        self.circle_filled(painter, *first, 0.5 * thickness - 0.1, color);
+        self.circle_filled(painter, *last, 0.5 * thickness - 0.1, color);
 
         let stroke = Stroke::new(thickness, color);
-
-        let first = *trail_points.first().unwrap();
-        self.circle_filled(painter, first, 0.5 * thickness - 0.1, color);
-
-        let last = *trail_points.last().unwrap();
-        self.circle_filled(painter, last, 0.5 * thickness - 0.1, color);
-
         let path = PathShape::line(trail_points, stroke);
         self.add_path(painter, path);
     }
