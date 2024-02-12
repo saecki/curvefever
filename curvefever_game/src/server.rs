@@ -1,15 +1,27 @@
 use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
+use axum::handler::Handler;
+use axum::http::{header, HeaderValue, Response};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, MethodRouter};
 use axum::Router;
 use curvefever_common::{ClientEvent, GameEvent};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
+
+#[rustfmt::skip]
+mod files {
+    pub const INDEX_HTML: &'static [u8] = include_bytes!("../../curvefever_remote/dist/index.html");
+    pub const APP_JS: &'static [u8] = include_bytes!("../../curvefever_remote/dist/curvefever_remote.js");
+    pub const APP_WASM: &'static [u8] = include_bytes!("../../curvefever_remote/dist/curvefever_remote_bg.wasm");
+    pub const MANIFEST_JSON: &'static [u8] = include_bytes!("../../curvefever_remote/dist/manifest.json");
+    pub const SW_JS: &'static [u8] = include_bytes!("../../curvefever_remote/dist/sw.js");
+}
 
 struct AppState {
     server_sender: Sender<ClientEvent>,
@@ -48,7 +60,27 @@ pub fn start_server(
         });
 
         let app = Router::new()
-            .route("/", get(root))
+            .route(
+                "/",
+                get_embedded_file("text/html; charset=utf-8", files::INDEX_HTML),
+            )
+            .route(
+                "/index.html",
+                get_embedded_file("text/html; charset=utf-8", files::INDEX_HTML),
+            )
+            .route(
+                "/curvefever_remote.js",
+                get_embedded_file("text/javascript; charset=utf-8", files::APP_JS),
+            )
+            .route(
+                "/curvefever_remote_bg.wasm",
+                get_embedded_file("application/wasm", files::APP_WASM),
+            )
+            .route(
+                "/manifest.json",
+                get_embedded_file("application/json", files::MANIFEST_JSON),
+            )
+            .route("/sw.js", get_embedded_file("text/javascript", files::SW_JS))
             .route("/join", get(ws_handler))
             .with_state(state);
 
@@ -60,8 +92,23 @@ pub fn start_server(
     });
 }
 
-async fn root(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // TODO: serve app
+fn get_embedded_file<T>(
+    content_type: &'static str,
+    bytes: &'static [u8],
+) -> MethodRouter<T, std::convert::Infallible>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    get(move || async move { serve_embedded_file(content_type, bytes) })
+}
+
+fn serve_embedded_file(content_type: &'static str, bytes: &'static [u8]) -> impl IntoResponse {
+    let body = Body::from(bytes);
+    let mut resp = Response::new(body);
+    let headers = resp.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    resp
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {

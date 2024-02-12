@@ -7,15 +7,20 @@ use egui::{
 };
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket};
 
-const SERVER_URL: &str = "ws://127.0.0.1:8910/join";
-
 const TEXT_SIZE: f32 = 20.0;
 
 fn main() {
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let base_url = document.url().unwrap();
+    let base_url = base_url.strip_prefix("http://").unwrap_or(&base_url);
+    let base_url = base_url.strip_prefix("https://").unwrap_or(&base_url);
+    let url = format!("ws://{base_url}join");
+
     let (game_sender, game_receiver) = async_channel::unbounded();
-    let client_sender = start_websocket(game_sender).unwrap();
+    let client_sender = start_websocket(&url, game_sender).unwrap();
 
     let options = eframe::WebOptions::default();
     wasm_bindgen_futures::spawn_local(async {
@@ -89,7 +94,7 @@ impl eframe::App for CurvefeverRemoteApp {
 
 impl CurvefeverRemoteApp {
     fn draw_controls(&self, ctx: &egui::Context, player: &Player) -> bool {
-        let mut diconnect = false;
+        let mut back = false;
         let mut left_down = false;
         let mut right_down = false;
         let mut restart = false;
@@ -139,8 +144,8 @@ impl CurvefeverRemoteApp {
 
                                 ui.add_space(8.0);
 
-                                if button(ui, RichText::new("disconnect").size(TEXT_SIZE)) {
-                                    diconnect = true;
+                                if button(ui, RichText::new("back").size(TEXT_SIZE)) {
+                                    back = true;
                                 }
                                 if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
                                     restart = true;
@@ -193,45 +198,29 @@ impl CurvefeverRemoteApp {
             self.client_sender.send(ClientEvent::Restart);
         }
 
-        diconnect
+        back
     }
 
     fn draw_home(&mut self, ctx: &egui::Context) {
         CentralPanel::default().show(ctx, |ui| {
             ui.columns(3, |uis| {
-                {
-                    let ui = &mut uis[0];
-                    let available_size = ui.available_size();
-                    let offset = Vec2::splat(8.0);
-                    let pos = ui.cursor().min + offset;
-                    let size = available_size - offset;
-                    let rect = Rect::from_min_size(pos, size);
-                    ui.allocate_ui_at_rect(rect, |ui| {
-                        let text = RichText::new("\u{27f3}").size(24.0);
-                        if ui.add(Button::new(text).frame(false)).clicked() {
-                            self.client_sender.send(ClientEvent::SyncPlayers);
-                        }
-                    });
-                }
-                {
-                    let ui = &mut uis[1];
-                    ui.vertical_centered(|ui| {
-                        Frame::none()
-                            .outer_margin(Margin::symmetric(0.0, 24.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
-                                ui.add_space(8.0);
+                let ui = &mut uis[1];
+                ui.vertical_centered(|ui| {
+                    Frame::none()
+                        .outer_margin(Margin::symmetric(0.0, 24.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
+                            ui.add_space(8.0);
 
-                                ScrollArea::vertical().show(ui, |ui| {
-                                    for p in self.players.iter() {
-                                        if button(ui, player_text(p).size(TEXT_SIZE)) {
-                                            self.player = Some(p.clone());
-                                        }
+                            ScrollArea::vertical().show(ui, |ui| {
+                                for p in self.players.iter() {
+                                    if button(ui, player_text(p).size(TEXT_SIZE)) {
+                                        self.player = Some(p.clone());
                                     }
-                                })
-                            });
-                    });
-                }
+                                }
+                            })
+                        });
+                });
             });
         });
     }
@@ -269,10 +258,13 @@ impl ClientSender {
     }
 }
 
-fn start_websocket(sender: Sender<GameEvent>) -> Result<ClientSender, wasm_bindgen::JsValue> {
+fn start_websocket(
+    url: &str,
+    sender: Sender<GameEvent>,
+) -> Result<ClientSender, wasm_bindgen::JsValue> {
     use wasm_bindgen::prelude::*;
 
-    let ws = WebSocket::new(SERVER_URL)?;
+    let ws = WebSocket::new(url)?;
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
     let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
