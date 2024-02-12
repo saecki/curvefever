@@ -8,15 +8,19 @@ pub enum ClientEvent {
     PrevColor { player_id: u16 },
     NextColor { player_id: u16 },
     Rename { player_id: u16, name: String },
+    Share,
+    AddPlayer { request_id: u64 },
 }
 
 impl ClientEvent {
-    pub const TYPE_SYNC_PLAYERS: u8 = 0x01;
-    pub const TYPE_RESTART: u8 = 0x02;
-    pub const TYPE_INPUT: u8 = 0x04;
-    pub const TYPE_PREV_COLOR: u8 = 0x08;
-    pub const TYPE_NEXT_COLOR: u8 = 0x10;
-    pub const TYPE_RENAME: u8 = 0x20;
+    pub const TYPE_SYNC_PLAYERS: u8 = 1;
+    pub const TYPE_RESTART: u8 = 2;
+    pub const TYPE_INPUT: u8 = 3;
+    pub const TYPE_PREV_COLOR: u8 = 4;
+    pub const TYPE_NEXT_COLOR: u8 = 5;
+    pub const TYPE_RENAME: u8 = 6;
+    pub const TYPE_SHARE: u8 = 7;
+    pub const TYPE_ADD_PLAYER: u8 = 8;
 
     pub fn encode(&self, stream: &mut impl std::io::Write) -> anyhow::Result<()> {
         match self {
@@ -43,6 +47,13 @@ impl ClientEvent {
                 stream.write_all(&[Self::TYPE_RENAME])?;
                 stream.write_all(&u16::to_le_bytes(*player_id))?;
                 write_string(stream, name)?;
+            }
+            ClientEvent::Share => {
+                stream.write_all(&[Self::TYPE_SHARE])?;
+            }
+            ClientEvent::AddPlayer { request_id } => {
+                stream.write_all(&[Self::TYPE_ADD_PLAYER])?;
+                stream.write_all(&u64::to_le_bytes(*request_id))?;
             }
         }
 
@@ -76,6 +87,11 @@ impl ClientEvent {
                 let name = read_string(stream)?;
                 ClientEvent::Rename { player_id, name }
             }
+            Self::TYPE_SHARE => ClientEvent::Share,
+            Self::TYPE_ADD_PLAYER => {
+                let request_id = read_u64(stream)?;
+                ClientEvent::AddPlayer { request_id }
+            }
             _ => {
                 anyhow::bail!("Unknown ClientEvent type: {}", ty);
             }
@@ -87,25 +103,38 @@ impl ClientEvent {
 
 #[derive(Clone, Debug)]
 pub enum GameEvent {
-    PlayerList(Vec<Player>),
     Exit,
+    PlayerSync {
+        players: Vec<Player>,
+    },
+    /// Response to a [`ClientEvent::AddPlayer`].
+    PlayerAdded {
+        request_id: u64,
+        player: Player,
+    },
 }
 
 impl GameEvent {
-    pub const TYPE_EXIT: u8 = 0x01;
-    pub const TYPE_PLAYER_LIST: u8 = 0x02;
+    pub const TYPE_EXIT: u8 = 1;
+    pub const TYPE_PLAYER_LIST: u8 = 2;
+    pub const TYPE_PLAYER_ADDED: u8 = 3;
 
     pub fn encode(&self, stream: &mut impl std::io::Write) -> std::io::Result<()> {
         match self {
-            GameEvent::PlayerList(players) => {
+            GameEvent::Exit => {
+                stream.write_all(&[Self::TYPE_EXIT])?;
+            }
+            GameEvent::PlayerSync { players } => {
                 stream.write_all(&[Self::TYPE_PLAYER_LIST])?;
                 stream.write_all(&u16::to_le_bytes(players.len() as u16))?;
                 for p in players.iter() {
                     p.encode(stream)?;
                 }
             }
-            GameEvent::Exit => {
-                stream.write_all(&[Self::TYPE_EXIT])?;
+            GameEvent::PlayerAdded { request_id, player } => {
+                stream.write_all(&[Self::TYPE_PLAYER_ADDED])?;
+                stream.write_all(&u64::to_le_bytes(*request_id))?;
+                player.encode(stream)?;
             }
         }
 
@@ -123,7 +152,12 @@ impl GameEvent {
                 for _ in 0..num_players {
                     players.push(Player::decode(stream)?);
                 }
-                GameEvent::PlayerList(players)
+                GameEvent::PlayerSync { players }
+            }
+            Self::TYPE_PLAYER_ADDED => {
+                let request_id = read_u64(stream)?;
+                let player = Player::decode(stream)?;
+                GameEvent::PlayerAdded { request_id, player }
             }
             _ => {
                 anyhow::bail!("Unknown GameEvent type: {}", ty);
@@ -190,6 +224,12 @@ fn read_u16(stream: &mut impl std::io::Read) -> std::io::Result<u16> {
     let mut buf = [0; 2];
     stream.read_exact(&mut buf)?;
     Ok(u16::from_le_bytes(buf))
+}
+
+fn read_u64(stream: &mut impl std::io::Read) -> std::io::Result<u64> {
+    let mut buf = [0; 8];
+    stream.read_exact(&mut buf)?;
+    Ok(u64::from_le_bytes(buf))
 }
 
 fn write_string(stream: &mut impl std::io::Write, name: &str) -> std::io::Result<()> {

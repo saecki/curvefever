@@ -847,14 +847,15 @@ impl World {
         id
     }
 
-    pub fn add_player(&mut self) {
+    pub fn add_player(&mut self) -> Option<u16> {
         if self.players.len() >= PLAYER_COLORS.len() {
-            return;
+            return None;
         }
         let id = self.next_id();
         let name = format!("Player{}", self.players.len() + 1);
         let player = random_player(id, name, Key::ArrowLeft, Key::ArrowRight, &self.players);
-        self.players.push(player)
+        self.players.push(player);
+        Some(id)
     }
 
     pub fn remove_player(&mut self, idx: usize) {

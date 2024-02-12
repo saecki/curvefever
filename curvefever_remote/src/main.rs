@@ -38,6 +38,7 @@ fn main() {
 }
 
 struct CurvefeverRemoteApp {
+    add_request_id: Option<u64>,
     player: Option<Player>,
     players: Vec<Player>,
     client_sender: ClientSender,
@@ -51,6 +52,7 @@ impl CurvefeverRemoteApp {
         game_receiver: Receiver<GameEvent>,
     ) -> Self {
         Self {
+            add_request_id: None,
             player: None,
             players: Vec::new(),
             client_sender,
@@ -68,7 +70,7 @@ impl eframe::App for CurvefeverRemoteApp {
                 GameEvent::Exit => {
                     self.player = None;
                 }
-                GameEvent::PlayerList(players) => {
+                GameEvent::PlayerSync { players } => {
                     if let Some(current) = &self.player {
                         // remove or update player
                         self.player = players
@@ -77,6 +79,11 @@ impl eframe::App for CurvefeverRemoteApp {
                             .map(Clone::clone);
                     }
                     self.players = players;
+                }
+                GameEvent::PlayerAdded { request_id, player } => {
+                    if self.add_request_id == Some(request_id) {
+                        self.player = Some(player);
+                    }
                 }
             }
         }
@@ -98,6 +105,7 @@ impl CurvefeverRemoteApp {
         let mut left_down = false;
         let mut right_down = false;
         let mut restart = false;
+        let mut share = false;
         ctx.input(|i| {
             left_down |= i.key_down(Key::ArrowLeft);
             right_down |= i.key_down(Key::ArrowRight);
@@ -150,6 +158,9 @@ impl CurvefeverRemoteApp {
                                 if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
                                     restart = true;
                                 }
+                                if button(ui, RichText::new("share").size(TEXT_SIZE)) {
+                                    share = true;
+                                }
 
                                 ui.columns(2, |uis| {
                                     let ui = &mut uis[0];
@@ -197,6 +208,9 @@ impl CurvefeverRemoteApp {
         if restart {
             self.client_sender.send(ClientEvent::Restart);
         }
+        if share {
+            self.client_sender.send(ClientEvent::Share);
+        }
 
         back
     }
@@ -211,6 +225,13 @@ impl CurvefeverRemoteApp {
                         .show(ui, |ui| {
                             ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
                             ui.add_space(8.0);
+
+                            if button(ui, RichText::new("add player").size(TEXT_SIZE)) {
+                                let request_id = rand::random();
+                                self.add_request_id = Some(request_id);
+                                self.client_sender
+                                    .send(ClientEvent::AddPlayer { request_id });
+                            }
 
                             ScrollArea::vertical().show(ui, |ui| {
                                 for p in self.players.iter() {

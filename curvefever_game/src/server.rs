@@ -4,7 +4,6 @@ use async_channel::{Receiver, Sender};
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
-use axum::handler::Handler;
 use axum::http::{header, HeaderValue, Response};
 use axum::response::IntoResponse;
 use axum::routing::{get, MethodRouter};
@@ -53,7 +52,10 @@ pub fn start_server(
                 {
                     let clients = state_ref.clients.read().await;
                     for c in clients.iter() {
-                        c.send(msg.clone()).await;
+                        let res = c.send(msg.clone()).await;
+                        if let Err(e) = res {
+                            tracing::error!("Error sending message to client:\n{}", e);
+                        }
                     }
                 }
             }

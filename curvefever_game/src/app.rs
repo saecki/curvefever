@@ -24,7 +24,7 @@ pub struct CurvefeverApp {
     bg_thread: Option<std::thread::JoinHandle<()>>,
     game_sender: Sender<GameEvent>,
     world: Arc<RwLock<World>>,
-    menu: Menu,
+    menu: Arc<RwLock<Menu>>,
     world_to_screen_offset: Vec2,
     world_to_screen_scale: f32,
     local_url: String,
@@ -70,26 +70,21 @@ impl CurvefeverApp {
     }
 }
 
+#[derive(Clone, Copy, Default)]
 struct Menu {
     state: MenuState,
 }
 
-impl Menu {
-    pub fn new() -> Self {
-        Self {
-            state: MenuState::Home,
-        }
-    }
-}
-
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum MenuState {
+    #[default]
     Home,
     Help,
     Join,
     Player(PlayerMenu),
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PlayerMenu {
     player_index: usize,
     field_index: usize,
@@ -132,8 +127,10 @@ impl CurvefeverApp {
     ) -> Self {
         let ctx = cc.egui_ctx.clone();
         let world = Arc::new(RwLock::new(World::new()));
+        let menu = Arc::new(RwLock::new(Menu::default()));
 
         let bg_world = Arc::clone(&world);
+        let bg_menu = Arc::clone(&menu);
         let bg_game_sender = game_sender.clone();
         let bg_thread = std::thread::spawn(move || {
             let mut start = Instant::now();
@@ -158,21 +155,45 @@ impl CurvefeverApp {
                                 }
                             }
                             ClientEvent::PrevColor { player_id } => {
-                                if let Some(p) = find_player(&mut world.players, player_id) {
-                                    p.color.prev();
-                                    sync_players(&bg_game_sender, &world.players);
+                                if matches!(&world.state, GameState::Stopped(_)) {
+                                    if let Some(p) = find_player(&mut world.players, player_id) {
+                                        p.color.prev();
+                                        sync_players(&bg_game_sender, &world.players);
+                                    }
                                 }
                             }
                             ClientEvent::NextColor { player_id } => {
-                                if let Some(p) = find_player(&mut world.players, player_id) {
-                                    p.color.next();
-                                    sync_players(&bg_game_sender, &world.players);
+                                if matches!(&world.state, GameState::Stopped(_)) {
+                                    if let Some(p) = find_player(&mut world.players, player_id) {
+                                        p.color.next();
+                                        sync_players(&bg_game_sender, &world.players);
+                                    }
                                 }
                             }
                             ClientEvent::Rename { player_id, name } => {
                                 if let Some(p) = find_player(&mut world.players, player_id) {
                                     p.name = name;
                                     sync_players(&bg_game_sender, &world.players);
+                                }
+                            }
+                            ClientEvent::Share => {
+                                if matches!(&world.state, GameState::Stopped(_)) {
+                                    let mut menu = bg_menu.write().unwrap();
+                                    if menu.state == MenuState::Join {
+                                        menu.state = MenuState::Home;
+                                    } else {
+                                        menu.state = MenuState::Join;
+                                    }
+                                }
+                            }
+                            ClientEvent::AddPlayer { request_id } => {
+                                if matches!(&world.state, GameState::Stopped(_)) {
+                                    if let Some(_) = world.add_player() {
+                                        sync_players(&bg_game_sender, &world.players);
+                                        let player = player_dto(world.players.last().unwrap());
+                                        let event = GameEvent::PlayerAdded { request_id, player };
+                                        bg_game_sender.send_blocking(event).unwrap();
+                                    }
                                 }
                             }
                         }
@@ -201,7 +222,7 @@ impl CurvefeverApp {
             bg_thread: Some(bg_thread),
             game_sender,
             world,
-            menu: Menu::new(),
+            menu,
             world_to_screen_offset: Vec2::ZERO,
             world_to_screen_scale: 1.0,
             local_url,
@@ -214,8 +235,8 @@ impl eframe::App for CurvefeverApp {
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
         ctx.input(|input| {
             let mut world = self.world.write().unwrap();
-
-            match &mut self.menu.state {
+            let mut menu = self.menu.write().unwrap();
+            match &mut menu.state {
                 MenuState::Home => {
                     for p in world.players.iter_mut() {
                         let left_down = input.key_down(p.left_key);
@@ -228,21 +249,21 @@ impl eframe::App for CurvefeverApp {
                     } else if input.key_pressed(Key::Space) {
                         world.restart();
                     } else if input.key_pressed(Key::H) {
-                        self.menu.state = MenuState::Help;
+                        menu.state = MenuState::Help;
                     } else if input.key_pressed(Key::J) {
-                        self.menu.state = MenuState::Join;
+                        menu.state = MenuState::Join;
                     } else if input.key_pressed(Key::P) {
-                        self.menu.state = MenuState::Player(PlayerMenu::default());
+                        menu.state = MenuState::Player(PlayerMenu::default());
                     }
                 }
                 MenuState::Help => {
                     if input.key_pressed(Key::Escape) {
-                        self.menu.state = MenuState::Home;
+                        menu.state = MenuState::Home;
                     }
                 }
                 MenuState::Join => {
                     if input.key_pressed(Key::Escape) {
-                        self.menu.state = MenuState::Home;
+                        menu.state = MenuState::Home;
                     }
                 }
                 MenuState::Player(player_menu) => {
@@ -252,7 +273,7 @@ impl eframe::App for CurvefeverApp {
                         if player_menu.selection_active {
                             player_menu.selection_active = false;
                         } else {
-                            self.menu.state = MenuState::Home;
+                            menu.state = MenuState::Home;
                         }
                     } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
                         player_menu.selection_active = !player_menu.selection_active;
@@ -421,7 +442,8 @@ impl eframe::App for CurvefeverApp {
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
                     self.rect_filled(painter, rect, Rounding::ZERO, Color32::from_black_alpha(80));
 
-                    match &self.menu.state {
+                    let menu = self.menu.read().unwrap();
+                    match &menu.state {
                         MenuState::Home => {
                             self.draw_normal_menu(painter, &world);
                         }
@@ -432,7 +454,7 @@ impl eframe::App for CurvefeverApp {
                             self.draw_join_menu(painter);
                         }
                         MenuState::Player(player_menu) => {
-                            self.draw_player_menu(painter, player_menu, &world);
+                            self.draw_player_menu(painter, &player_menu, &world);
                         }
                     }
                 }
@@ -1201,14 +1223,15 @@ fn find_player(players: &mut [Player], player_id: u16) -> Option<&mut Player> {
 }
 
 fn sync_players(game_sender: &Sender<GameEvent>, players: &[Player]) {
-    let players = players
-        .iter()
-        .map(|p| curvefever_common::Player {
-            id: p.id,
-            color: p.color.color32().to_array(),
-            name: p.name.clone(),
-        })
-        .collect();
-    let event = GameEvent::PlayerList(players);
+    let players = players.iter().map(player_dto).collect();
+    let event = GameEvent::PlayerSync { players };
     game_sender.send_blocking(event).unwrap();
+}
+
+fn player_dto(player: &Player) -> curvefever_common::Player {
+    curvefever_common::Player {
+        id: player.id,
+        color: player.color.color32().to_array(),
+        name: player.name.clone(),
+    }
 }
