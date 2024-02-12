@@ -109,7 +109,8 @@ impl CurvefeverRemoteApp {
 
         CentralPanel::default().show(ctx, |ui| {
             ui.columns(3, |uis| {
-                right_down |= touch_pad(&mut uis[0], "left");
+                left_down |= touch_pad(&mut uis[0], "left");
+
                 {
                     let ui = &mut uis[1];
                     ui.vertical_centered(|ui| {
@@ -163,6 +164,7 @@ impl CurvefeverRemoteApp {
                             })
                     });
                 }
+
                 right_down |= touch_pad(&mut uis[2], "right");
             })
         });
