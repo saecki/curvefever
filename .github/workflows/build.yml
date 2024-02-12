@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - 'main'
+  schedule:
+  - cron:  '0 0 1 * *' # monthly
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly
+        targets: wasm32-unknown-unknown
+    - uses: jetli/trunk-action@v0.4.0
+    - uses: jetli/wasm-bindgen-action@v0.2.0
+
+    - run: sudo apt-get update
+    - run: sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libgtk-3-dev
+
+    - uses: Swatinem/rust-cache@v2
+
+    - run: cd curvefever_remote && trunk build --release --filehash false
+    - run: cargo build --release --bin curvefever
+
+    - run: git config user.name "${GITHUB_ACTOR}"
+    - run: git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+    - run: git tag -fa nightly main -m ""
+    - run: git push --force origin nightly
+
+    - uses: softprops/action-gh-release@v0.1.15
+      with:
+        name: 'curvefever nightly'
+        body: 'Nightly build of curvefever'
+        tag_name: 'nightly'
+        fail_on_unmatched_files: true
+        files: |
+          target/release/curvefever
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly
+        targets: wasm32-unknown-unknown
+    - uses: jetli/trunk-action@v0.4.0
+    - uses: jetli/wasm-bindgen-action@v0.2.0
+
+    - uses: Swatinem/rust-cache@v2
+
+    - run: cd curvefever_remote && trunk build --release --filehash false
+    - run: cargo build --release --bin curvefever
+
+    - uses: softprops/action-gh-release@v0.1.15
+      with:
+        name: 'curvefever nightly'
+        body: 'Nightly build of curvefever'
+        tag_name: 'nightly'
+        prerelease: false
+        fail_on_unmatched_files: true
+        files: |
+          target/release/curvefever.exe
