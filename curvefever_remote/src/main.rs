@@ -2,8 +2,7 @@ use async_channel::{Receiver, Sender};
 use curvefever_common::{ClientEvent, Direction, GameEvent, Player};
 use eframe::CreationContext;
 use egui::{
-    Align, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, Margin, Rect, RichText,
-    Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
+    Align, Align2, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, LayerId, Margin, Rect, RichText, Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText
 };
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket};
 
@@ -110,23 +109,7 @@ impl CurvefeverRemoteApp {
 
         CentralPanel::default().show(ctx, |ui| {
             ui.columns(3, |uis| {
-                {
-                    let ui = &mut uis[0];
-                    Frame::none()
-                        .rounding(Rounding::same(8.0))
-                        .fill(Color32::from_gray(0x18))
-                        .show(ui, |ui| {
-                            let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
-                            ui.allocate_ui_at_rect(rect, |ui| {
-                                ui.centered_and_justified(|ui| {
-                                    ui.label(RichText::new("right").size(32.0));
-                                });
-                            });
-                            let resp = ui.allocate_rect(rect, Sense::click());
-                            left_down |=
-                                resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
-                        });
-                }
+                right_down |= touch_pad(&mut uis[0], "left");
                 {
                     let ui = &mut uis[1];
                     ui.vertical_centered(|ui| {
@@ -180,23 +163,7 @@ impl CurvefeverRemoteApp {
                             })
                     });
                 }
-                {
-                    let ui = &mut uis[2];
-                    Frame::none()
-                        .rounding(Rounding::same(8.0))
-                        .fill(Color32::from_gray(0x18))
-                        .show(ui, |ui| {
-                            let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
-                            ui.allocate_ui_at_rect(rect, |ui| {
-                                ui.centered_and_justified(|ui| {
-                                    ui.label(RichText::new("right").size(32.0));
-                                });
-                            });
-                            let resp = ui.allocate_rect(rect, Sense::click());
-                            right_down |=
-                                resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
-                        });
-                }
+                right_down |= touch_pad(&mut uis[2], "right");
             })
         });
 
@@ -270,6 +237,32 @@ fn request_fullscreen() {
         )
         .unwrap();
     delayed.forget();
+}
+
+fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
+    let mut down = false;
+    Frame::none().show(ui, |ui| {
+        let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
+        let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
+        down |= resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
+
+        let bg_fill = if down {
+            Color32::from_rgba_unmultiplied(0x30, 0x50, 0xc0, 0x10)
+        } else {
+            Color32::from_gray(0x20)
+        };
+        painter.rect_filled(rect, Rounding::same(8.0), bg_fill);
+
+        let text_color = if down {
+            Color32::from_rgb(0x30, 0x60, 0xff)
+        } else {
+            Color32::from_gray(0xa0)
+        };
+        let font = FontId::new(1.5 * TEXT_SIZE, FontFamily::Monospace);
+        painter.text(rect.center(), Align2::CENTER_CENTER, name, font, text_color);
+    });
+
+    down
 }
 
 fn button(ui: &mut egui::Ui, text: impl Into<WidgetText>) -> bool {
