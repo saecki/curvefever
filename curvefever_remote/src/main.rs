@@ -14,9 +14,9 @@ fn main() {
 
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
-    let base_url = document.url().unwrap();
-    let base_url = base_url.strip_prefix("http://").unwrap_or(&base_url);
-    let base_url = base_url.strip_prefix("https://").unwrap_or(&base_url);
+    let base_url = &document.url().unwrap();
+    let base_url = base_url.strip_prefix("http://").unwrap_or(base_url);
+    let base_url = base_url.strip_prefix("https://").unwrap_or(base_url);
     let url = format!("ws://{base_url}join");
 
     let (game_sender, game_receiver) = async_channel::unbounded();
@@ -73,10 +73,7 @@ impl eframe::App for CurvefeverRemoteApp {
                 GameEvent::PlayerSync { players } => {
                     if let Some(current) = &self.player {
                         // remove or update current player
-                        self.player = players
-                            .iter()
-                            .find(|p| p.id == current.id)
-                            .map(Clone::clone);
+                        self.player = players.iter().find(|p| p.id == current.id).cloned();
                     }
                     self.players = players;
                 }

@@ -200,7 +200,8 @@ impl CurvefeverApp {
                             }
                             ClientEvent::AddPlayer { request_id } => {
                                 if matches!(&world.state, GameState::Stopped(_)) {
-                                    if let Some(_) = world.add_player() {
+                                    let id = world.add_player();
+                                    if id.is_some() {
                                         let player = player_dto(world.players.last().unwrap());
                                         let event = GameEvent::PlayerAdded { request_id, player };
                                         bg_game_sender.send_blocking(event).unwrap();
@@ -469,7 +470,7 @@ impl eframe::App for CurvefeverApp {
                             self.draw_join_menu(painter);
                         }
                         MenuState::Player(player_menu) => {
-                            self.draw_player_menu(painter, &player_menu, &world);
+                            self.draw_player_menu(painter, player_menu, &world);
                         }
                     }
                 }
@@ -1224,13 +1225,7 @@ impl ColorExt for Color32 {
 }
 
 fn find_player(players: &mut [Player], player_id: u16) -> Option<&mut Player> {
-    for p in players.iter_mut() {
-        if p.id == player_id {
-            return Some(p);
-        }
-    }
-
-    None
+    players.iter_mut().find(|p| p.id == player_id)
 }
 
 fn sync_players(game_sender: &Sender<GameEvent>, players: &[Player]) {

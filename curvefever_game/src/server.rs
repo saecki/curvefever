@@ -16,11 +16,11 @@ use tokio::sync::RwLock;
 
 #[rustfmt::skip]
 mod files {
-    pub const INDEX_HTML: &'static [u8] = include_bytes!("../../curvefever_remote/dist/index.html");
-    pub const APP_JS: &'static [u8] = include_bytes!("../../curvefever_remote/dist/curvefever_remote.js");
-    pub const APP_WASM: &'static [u8] = include_bytes!("../../curvefever_remote/dist/curvefever_remote_bg.wasm");
-    pub const MANIFEST_JSON: &'static [u8] = include_bytes!("../../curvefever_remote/dist/manifest.json");
-    pub const SW_JS: &'static [u8] = include_bytes!("../../curvefever_remote/dist/sw.js");
+    pub const INDEX_HTML: &[u8] = include_bytes!("../../curvefever_remote/dist/index.html");
+    pub const APP_JS: &[u8] = include_bytes!("../../curvefever_remote/dist/curvefever_remote.js");
+    pub const APP_WASM: &[u8] = include_bytes!("../../curvefever_remote/dist/curvefever_remote_bg.wasm");
+    pub const MANIFEST_JSON: &[u8] = include_bytes!("../../curvefever_remote/dist/manifest.json");
+    pub const SW_JS: &[u8] = include_bytes!("../../curvefever_remote/dist/sw.js");
 }
 
 struct AppState {
