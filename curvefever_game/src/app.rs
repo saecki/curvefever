@@ -80,7 +80,7 @@ enum MenuState {
     #[default]
     Home,
     Help,
-    Join,
+    Share,
     Player(PlayerMenu),
 }
 
@@ -179,10 +179,10 @@ impl CurvefeverApp {
                             ClientEvent::Share => {
                                 if matches!(&world.state, GameState::Stopped(_)) {
                                     let mut menu = bg_menu.write().unwrap();
-                                    if menu.state == MenuState::Join {
+                                    if menu.state == MenuState::Share {
                                         menu.state = MenuState::Home;
                                     } else {
-                                        menu.state = MenuState::Join;
+                                        menu.state = MenuState::Share;
                                     }
                                 }
                             }
@@ -250,8 +250,9 @@ impl eframe::App for CurvefeverApp {
                         world.restart();
                     } else if input.key_pressed(Key::H) {
                         menu.state = MenuState::Help;
-                    } else if input.key_pressed(Key::J) {
-                        menu.state = MenuState::Join;
+                    } else if input.key_pressed(Key::S) {
+                        menu.state = MenuState::Share;
+
                     } else if input.key_pressed(Key::P) {
                         menu.state = MenuState::Player(PlayerMenu::default());
                     }
@@ -261,7 +262,7 @@ impl eframe::App for CurvefeverApp {
                         menu.state = MenuState::Home;
                     }
                 }
-                MenuState::Join => {
+                MenuState::Share => {
                     if input.key_pressed(Key::Escape) {
                         menu.state = MenuState::Home;
                     }
@@ -450,7 +451,7 @@ impl eframe::App for CurvefeverApp {
                         MenuState::Help => {
                             self.draw_help_menu(painter);
                         }
-                        MenuState::Join => {
+                        MenuState::Share => {
                             self.draw_join_menu(painter);
                         }
                         MenuState::Player(player_menu) => {
@@ -669,7 +670,7 @@ impl CurvefeverApp {
 
             let hints = [
                 ("H", "for help"),
-                ("J", "for join"),
+                ("S", "to share"),
                 ("P", "to manage players"),
             ];
 
