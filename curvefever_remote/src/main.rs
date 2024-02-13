@@ -104,10 +104,23 @@ impl CurvefeverRemoteApp {
         let mut left_down = false;
         let mut right_down = false;
         let mut input_event = None;
-        ctx.input(|i| {
-            left_down |= i.key_down(Key::ArrowLeft);
-            right_down |= i.key_down(Key::ArrowRight);
-        });
+
+        if ctx.memory(|m| m.focus().is_none()) {
+            ctx.input(|i| {
+                left_down |= i.key_down(Key::ArrowLeft);
+                right_down |= i.key_down(Key::ArrowRight);
+
+                if i.key_pressed(Key::Space) {
+                    input_event = Some(ClientEvent::Restart);
+                } else if i.key_pressed(Key::Escape) {
+                    input_event = Some(ClientEvent::Pause);
+                } else if i.key_pressed(Key::S) {
+                    input_event = Some(ClientEvent::Share);
+                } else if i.key_pressed(Key::H) {
+                    input_event = Some(ClientEvent::Help);
+                }
+            });
+        }
 
         CentralPanel::default().show(ctx, |ui| {
             ui.columns(3, |uis| {
@@ -120,18 +133,25 @@ impl CurvefeverRemoteApp {
                             .outer_margin(Margin::symmetric(0.0, 16.0))
                             .show(ui, |ui| {
                                 let mut buf = String::from(&player.name);
-                                TextEdit::singleline(&mut buf)
+                                let resp = TextEdit::singleline(&mut buf)
                                     .frame(false)
                                     .horizontal_align(Align::Center)
                                     .font(FontId::new(1.5 * TEXT_SIZE, FontFamily::Proportional))
                                     .text_color(player_color(player))
                                     .show(ui);
-
                                 if buf != player.name {
                                     self.client_sender.send(ClientEvent::Rename {
                                         player_id: player.id,
                                         name: buf,
                                     })
+                                }
+
+                                if resp.response.has_focus() {
+                                    ui.input(|i| {
+                                        if i.key_pressed(Key::Enter) {
+                                            resp.response.surrender_focus();
+                                        }
+                                    });
                                 }
 
                                 ui.add_space(2.0 * BUTTON_SPACE);
