@@ -387,27 +387,31 @@ pub enum CrashMessage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumMembersArray)]
 pub enum PlayerColor {
-    Orange = 0,
-    Green = 1,
-    Purple = 2,
-    Cyan = 3,
-    Magenta = 4,
-    Red = 5,
-    Yellow = 6,
-    Blue = 7,
+    Red = 0,
+    Orange = 1,
+    Yellow = 2,
+    Lime = 3,
+    Green = 4,
+    Cyan = 5,
+    Blue = 6,
+    Indigo = 7,
+    Purple = 8,
+    Magenta = 9,
 }
 
 impl PlayerColor {
     pub fn color32(&self) -> Color32 {
         match self {
-            Self::Orange => Color32::from_rgb(230, 100, 20),
-            Self::Green => Color32::from_rgb(50, 230, 20),
-            Self::Purple => Color32::from_rgb(160, 100, 230),
+            Self::Red => Color32::from_rgb(230, 0, 10),
+            Self::Orange => Color32::from_rgb(230, 90, 20),
+            Self::Yellow => Color32::from_rgb(230, 170, 20),
+            Self::Lime => Color32::from_rgb(160, 230, 30),
+            Self::Green => Color32::from_rgb(50, 230, 110),
             Self::Cyan => Color32::from_rgb(30, 200, 200),
+            Self::Blue => Color32::from_rgb(50, 120, 220),
+            Self::Indigo => Color32::from_rgb(80, 50, 230),
+            Self::Purple => Color32::from_rgb(160, 100, 230),
             Self::Magenta => Color32::from_rgb(230, 40, 180),
-            Self::Red => Color32::from_rgb(230, 40, 10),
-            Self::Yellow => Color32::from_rgb(230, 230, 30),
-            Self::Blue => Color32::from_rgb(70, 90, 230),
         }
     }
 
