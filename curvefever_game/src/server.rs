@@ -130,6 +130,7 @@ async fn serve_embedded_file(
     let headers = resp.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     resp
 }
 
