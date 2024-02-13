@@ -643,8 +643,8 @@ impl CurvefeverApp {
             return;
         };
 
-        self.circle_filled(painter, *first, 0.5 * thickness - 0.1, color);
-        self.circle_filled(painter, *last, 0.5 * thickness - 0.1, color);
+        self.circle_filled(painter, *first, 0.5 * thickness - 0.5, color);
+        self.circle_filled(painter, *last, 0.5 * thickness - 0.5, color);
 
         let stroke = Stroke::new(thickness, color);
         let path = PathShape::line(trail_points, stroke);
