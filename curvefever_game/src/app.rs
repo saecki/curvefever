@@ -148,12 +148,26 @@ impl CurvefeverApp {
                             ClientEvent::SyncPlayers => {
                                 players_invalidated = true;
                             }
-                            ClientEvent::Restart => {
-                                world.restart();
-                            }
                             ClientEvent::Input { player_id, dir } => {
                                 if let Some(p) = find_player(&mut world.players, player_id) {
                                     p.remote_direction = dir;
+                                }
+                            }
+                            ClientEvent::AddPlayer { request_id } => {
+                                if matches!(&world.state, GameState::Stopped(_)) {
+                                    let id = world.add_player();
+                                    if id.is_some() {
+                                        let player = player_dto(world.players.last().unwrap());
+                                        let event = GameEvent::PlayerAdded { request_id, player };
+                                        bg_game_sender.send_blocking(event).unwrap();
+                                        players_invalidated = true;
+                                    }
+                                }
+                            }
+                            ClientEvent::Rename { player_id, name } => {
+                                if let Some(p) = find_player(&mut world.players, player_id) {
+                                    p.name = name;
+                                    players_invalidated = true;
                                 }
                             }
                             ClientEvent::PrevColor { player_id } => {
@@ -172,11 +186,11 @@ impl CurvefeverApp {
                                     }
                                 }
                             }
-                            ClientEvent::Rename { player_id, name } => {
-                                if let Some(p) = find_player(&mut world.players, player_id) {
-                                    p.name = name;
-                                    players_invalidated = true;
-                                }
+                            ClientEvent::Restart => {
+                                world.restart();
+                            }
+                            ClientEvent::Pause => {
+                                world.toggle_pause();
                             }
                             ClientEvent::Share => {
                                 if matches!(&world.state, GameState::Stopped(_)) {
@@ -195,16 +209,6 @@ impl CurvefeverApp {
                                         menu.state = MenuState::Home;
                                     } else {
                                         menu.state = MenuState::Help;
-                                    }
-                                }
-                            }
-                            ClientEvent::AddPlayer { request_id } => {
-                                if matches!(&world.state, GameState::Stopped(_)) {
-                                    let id = world.add_player();
-                                    if id.is_some() {
-                                        let player = player_dto(world.players.last().unwrap());
-                                        let event = GameEvent::PlayerAdded { request_id, player };
-                                        bg_game_sender.send_blocking(event).unwrap();
                                     }
                                 }
                             }
@@ -264,12 +268,16 @@ impl eframe::App for CurvefeverApp {
                         world.toggle_pause();
                     } else if input.key_pressed(Key::Space) {
                         world.restart();
-                    } else if input.key_pressed(Key::H) {
-                        menu.state = MenuState::Help;
-                    } else if input.key_pressed(Key::S) {
-                        menu.state = MenuState::Share;
-                    } else if input.key_pressed(Key::P) {
-                        menu.state = MenuState::Player(PlayerMenu::default());
+                    }
+
+                    if matches!(world.state, GameState::Stopped(_)) {
+                        if input.key_pressed(Key::H) {
+                            menu.state = MenuState::Help;
+                        } else if input.key_pressed(Key::S) {
+                            menu.state = MenuState::Share;
+                        } else if input.key_pressed(Key::P) {
+                            menu.state = MenuState::Player(PlayerMenu::default());
+                        }
                     }
                 }
                 MenuState::Help => {

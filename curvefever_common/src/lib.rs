@@ -3,39 +3,47 @@ use curvefever_derive::EnumTryFromRepr;
 #[derive(Debug)]
 pub enum ClientEvent {
     SyncPlayers,
-    Restart,
     Input { player_id: u16, dir: Direction },
+    AddPlayer { request_id: u64 },
+    Rename { player_id: u16, name: String },
     PrevColor { player_id: u16 },
     NextColor { player_id: u16 },
-    Rename { player_id: u16, name: String },
+    Restart,
+    Pause,
     Share,
     Help,
-    AddPlayer { request_id: u64 },
 }
 
 impl ClientEvent {
     pub const TYPE_SYNC_PLAYERS: u8 = 1;
-    pub const TYPE_RESTART: u8 = 2;
-    pub const TYPE_INPUT: u8 = 3;
-    pub const TYPE_PREV_COLOR: u8 = 4;
-    pub const TYPE_NEXT_COLOR: u8 = 5;
-    pub const TYPE_RENAME: u8 = 6;
-    pub const TYPE_SHARE: u8 = 7;
-    pub const TYPE_HELP: u8 = 8;
-    pub const TYPE_ADD_PLAYER: u8 = 9;
+    pub const TYPE_INPUT: u8 = 2;
+    pub const TYPE_ADD_PLAYER: u8 = 3;
+    pub const TYPE_RENAME: u8 = 4;
+    pub const TYPE_PREV_COLOR: u8 = 5;
+    pub const TYPE_NEXT_COLOR: u8 = 6;
+    pub const TYPE_RESTART: u8 = 7;
+    pub const TYPE_PAUSE: u8 = 8;
+    pub const TYPE_SHARE: u8 = 9;
+    pub const TYPE_HELP: u8 = 10;
 
     pub fn encode(&self, stream: &mut impl std::io::Write) -> anyhow::Result<()> {
         match self {
             ClientEvent::SyncPlayers => {
                 stream.write_all(&[Self::TYPE_SYNC_PLAYERS])?;
             }
-            ClientEvent::Restart => {
-                stream.write_all(&[Self::TYPE_RESTART])?;
-            }
             ClientEvent::Input { player_id, dir } => {
                 stream.write_all(&[Self::TYPE_INPUT])?;
                 stream.write_all(&u16::to_le_bytes(*player_id))?;
                 stream.write_all(&[*dir as u8])?;
+            }
+            ClientEvent::AddPlayer { request_id } => {
+                stream.write_all(&[Self::TYPE_ADD_PLAYER])?;
+                stream.write_all(&u64::to_le_bytes(*request_id))?;
+            }
+            ClientEvent::Rename { player_id, name } => {
+                stream.write_all(&[Self::TYPE_RENAME])?;
+                stream.write_all(&u16::to_le_bytes(*player_id))?;
+                write_string(stream, name)?;
             }
             ClientEvent::PrevColor { player_id } => {
                 stream.write_all(&[Self::TYPE_PREV_COLOR])?;
@@ -45,20 +53,17 @@ impl ClientEvent {
                 stream.write_all(&[Self::TYPE_NEXT_COLOR])?;
                 stream.write_all(&u16::to_le_bytes(*player_id))?;
             }
-            ClientEvent::Rename { player_id, name } => {
-                stream.write_all(&[Self::TYPE_RENAME])?;
-                stream.write_all(&u16::to_le_bytes(*player_id))?;
-                write_string(stream, name)?;
+            ClientEvent::Restart => {
+                stream.write_all(&[Self::TYPE_RESTART])?;
+            }
+            ClientEvent::Pause => {
+                stream.write_all(&[Self::TYPE_PAUSE])?;
             }
             ClientEvent::Share => {
                 stream.write_all(&[Self::TYPE_SHARE])?;
             }
             ClientEvent::Help => {
                 stream.write_all(&[Self::TYPE_HELP])?;
-            }
-            ClientEvent::AddPlayer { request_id } => {
-                stream.write_all(&[Self::TYPE_ADD_PLAYER])?;
-                stream.write_all(&u64::to_le_bytes(*request_id))?;
             }
         }
 
@@ -69,7 +74,6 @@ impl ClientEvent {
         let ty = read_u8(stream)?;
         let event = match ty {
             Self::TYPE_SYNC_PLAYERS => ClientEvent::SyncPlayers,
-            Self::TYPE_RESTART => ClientEvent::Restart,
             Self::TYPE_INPUT => {
                 let player_id = read_u16(stream)?;
                 let dir = read_u8(stream)?;
@@ -79,6 +83,15 @@ impl ClientEvent {
 
                 ClientEvent::Input { player_id, dir }
             }
+            Self::TYPE_ADD_PLAYER => {
+                let request_id = read_u64(stream)?;
+                ClientEvent::AddPlayer { request_id }
+            }
+            Self::TYPE_RENAME => {
+                let player_id = read_u16(stream)?;
+                let name = read_string(stream)?;
+                ClientEvent::Rename { player_id, name }
+            }
             Self::TYPE_PREV_COLOR => {
                 let player_id = read_u16(stream)?;
                 ClientEvent::PrevColor { player_id }
@@ -87,17 +100,10 @@ impl ClientEvent {
                 let player_id = read_u16(stream)?;
                 ClientEvent::NextColor { player_id }
             }
-            Self::TYPE_RENAME => {
-                let player_id = read_u16(stream)?;
-                let name = read_string(stream)?;
-                ClientEvent::Rename { player_id, name }
-            }
+            Self::TYPE_RESTART => ClientEvent::Restart,
+            Self::TYPE_PAUSE => ClientEvent::Pause,
             Self::TYPE_SHARE => ClientEvent::Share,
             Self::TYPE_HELP => ClientEvent::Help,
-            Self::TYPE_ADD_PLAYER => {
-                let request_id = read_u64(stream)?;
-                ClientEvent::AddPlayer { request_id }
-            }
             _ => {
                 anyhow::bail!("Unknown ClientEvent type: {}", ty);
             }

@@ -2,11 +2,13 @@ use async_channel::{Receiver, Sender};
 use curvefever_common::{ClientEvent, Direction, GameEvent, Player};
 use eframe::CreationContext;
 use egui::{
-    Align, Align2, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, LayerId, Margin, Rect, RichText, Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText
+    Align, Align2, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, Margin, Rect,
+    RichText, Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
 };
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket};
 
 const TEXT_SIZE: f32 = 20.0;
+const BUTTON_SPACE: f32 = 8.0;
 
 fn main() {
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
@@ -132,21 +134,28 @@ impl CurvefeverRemoteApp {
                                     })
                                 }
 
-                                ui.add_space(8.0);
+                                ui.add_space(2.0 * BUTTON_SPACE);
 
                                 if button(ui, RichText::new("back").size(TEXT_SIZE)) {
                                     back = true;
                                 }
+                                ui.add_space(BUTTON_SPACE);
                                 if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
                                     input_event = Some(ClientEvent::Restart);
                                 }
+                                ui.add_space(BUTTON_SPACE);
+                                if button(ui, RichText::new("pause").size(TEXT_SIZE)) {
+                                    input_event = Some(ClientEvent::Pause);
+                                }
+                                ui.add_space(BUTTON_SPACE);
                                 if button(ui, RichText::new("share").size(TEXT_SIZE)) {
                                     input_event = Some(ClientEvent::Share);
                                 }
+                                ui.add_space(BUTTON_SPACE);
                                 if button(ui, RichText::new("help").size(TEXT_SIZE)) {
                                     input_event = Some(ClientEvent::Help);
                                 }
-
+                                ui.add_space(BUTTON_SPACE);
                                 ui.columns(2, |uis| {
                                     let ui = &mut uis[0];
                                     if button(ui, RichText::new("prev color").size(TEXT_SIZE)) {
@@ -191,7 +200,8 @@ impl CurvefeverRemoteApp {
                         .outer_margin(Margin::symmetric(0.0, 16.0))
                         .show(ui, |ui| {
                             ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
-                            ui.add_space(8.0);
+
+                            ui.add_space(2.0 * BUTTON_SPACE);
 
                             if button(ui, RichText::new("add player").size(TEXT_SIZE)) {
                                 let request_id = rand::random();
@@ -200,12 +210,15 @@ impl CurvefeverRemoteApp {
                                     .send(ClientEvent::AddPlayer { request_id });
                             }
 
+                            ui.add_space(BUTTON_SPACE);
+
                             ScrollArea::vertical().show(ui, |ui| {
                                 for p in self.players.iter() {
                                     if button(ui, player_text(p).size(TEXT_SIZE)) {
                                         self.player = Some(p.clone());
                                         request_fullscreen();
                                     }
+                                    ui.add_space(BUTTON_SPACE);
                                 }
                             })
                         });
@@ -268,8 +281,6 @@ fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
 }
 
 fn button(ui: &mut egui::Ui, text: impl Into<WidgetText>) -> bool {
-    ui.add_space(8.0);
-
     let button_size = Vec2::new(ui.available_size().x, 2.0 * TEXT_SIZE);
     let resp = ui.add_sized(button_size, Button::new(text).rounding(Rounding::same(8.0)));
     resp.clicked()
