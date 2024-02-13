@@ -30,6 +30,7 @@ pub const BASE_SPEED: f32 = 150.0;
 pub const MIN_SPEED: f32 = 50.0;
 pub const BASE_THICKNESS: f32 = 4.0;
 pub const MIN_THICKNESS: f32 = 1.0;
+pub const MAX_THICKNESS: f32 = 16.0;
 pub const BASE_TURNING_RADIUS: f32 = 50.0;
 pub const MIN_TURNING_RADIUS: f32 = 25.0;
 
@@ -338,7 +339,7 @@ impl Player {
                     _ => None,
                 })
                 .sum::<f32>();
-        thickness.max(MIN_THICKNESS)
+        thickness.clamp(MIN_THICKNESS, MAX_THICKNESS)
     }
 
     fn turning_radius(&self) -> f32 {
@@ -499,6 +500,13 @@ impl TrailSection {
             TrailSection::Arc(s) => s.end_pos(),
         }
     }
+
+    pub fn length(&self) -> f32 {
+        match self {
+            TrailSection::Straight(s) => s.length(),
+            TrailSection::Arc(s) => s.length(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -517,6 +525,10 @@ impl StraightTrailSection {
             thickness,
             end,
         }
+    }
+
+    pub fn length(&self) -> f32 {
+        self.start.distance(self.end)
     }
 }
 
@@ -581,6 +593,18 @@ impl ArcTrailSection {
     /// The angle from the `Self::center_pos()` of this arc section
     pub fn arc_end_angle(&self) -> f32 {
         self.player_end_angle - FRAC_PI_2 * self.dir.angle_sign()
+    }
+
+    pub fn length(&self) -> f32 {
+        let start_angle = self.arc_start_angle().rem_euclid(TAU);
+        let end_angle = self.arc_end_angle().rem_euclid(TAU);
+        let (start_angle, end_angle) = match self.dir {
+            TurnDirection::Right => (start_angle, end_angle),
+            TurnDirection::Left => (end_angle, start_angle),
+        };
+        let angle_delta = end_angle - start_angle;
+
+        self.radius * angle_delta
     }
 }
 
@@ -1009,11 +1033,17 @@ fn gen_item_position(players: &[Player], items: &[Item]) -> Option<Pos2> {
 }
 
 fn intersects_own_trail(player: &Player) -> bool {
-    for s in player.trail.iter() {
-        let min_dist = 0.5 * player.thickness() + 0.5 * s.thickness();
+    let mut trail_iter = player.trail.iter().rev();
+    let mut trail_len = 0.0;
+
+    let player_extend = 0.5 * player.thickness();
+
+    // check trail in proximity to the current position
+    while let Some(s) = trail_iter.next() {
+        let min_dist = player_extend + 0.5 * s.thickness();
         let end_dist = player.pos.distance(s.end_pos());
 
-        if end_dist < min_dist {
+        if end_dist < min_dist && trail_len < min_dist {
             if let TrailSection::Arc(s) = s {
                 let angle_diff = (s.player_start_angle - s.player_end_angle).abs();
                 if angle_diff > PI {
@@ -1023,37 +1053,41 @@ fn intersects_own_trail(player: &Player) -> bool {
                     }
                 }
             }
-        }
-
-        if end_dist > min_dist {
-            let intersects = intersects_trail(
-                player.pos,
-                0.5 * player.thickness(),
-                std::slice::from_ref(s),
-            );
+        } else {
+            let intersects = intersects_trail(player.pos, player_extend, std::slice::from_ref(s));
             if intersects {
                 return true;
             }
         }
+
+        trail_len += s.length();
+        if trail_len >= player_extend + 0.5 * MAX_THICKNESS {
+            break;
+        }
     }
 
-    false
+    // check remaining trail
+    intersects_trail(player.pos, player_extend, trail_iter)
 }
 
-fn intersects_trail(pos: Pos2, dist: f32, trail: &[TrailSection]) -> bool {
-    for s in trail.iter() {
+fn intersects_trail<'a>(
+    pos: Pos2,
+    extend: f32,
+    trail: impl IntoIterator<Item = &'a TrailSection>,
+) -> bool {
+    for s in trail.into_iter() {
         if s.gap() {
             continue;
         }
 
         match s {
             TrailSection::Straight(s) => {
-                if intersects_straight_trailsection(s, pos, dist) {
+                if intersects_straight_trailsection(s, pos, extend) {
                     return true;
                 }
             }
             TrailSection::Arc(s) => {
-                if intersects_arc_trailsection(s, pos, dist) {
+                if intersects_arc_trailsection(s, pos, extend) {
                     return true;
                 }
             }
@@ -1063,42 +1097,54 @@ fn intersects_trail(pos: Pos2, dist: f32, trail: &[TrailSection]) -> bool {
     false
 }
 
-fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, dist: f32) -> bool {
-    let p1_dist = s.start.distance(pos);
-    let p2_dist = s.end.distance(pos);
-    let max_dist = 0.5 * s.thickness + dist;
-    if p1_dist < max_dist || p2_dist < max_dist {
+fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, extend: f32) -> bool {
+    let start_dist = s.start.distance(pos);
+    let end_dist = s.end.distance(pos);
+    let min_dist = 0.5 * s.thickness + extend;
+    if start_dist < min_dist || end_dist < min_dist {
         return true;
     }
 
-    let center_line_angle = angle(s.start, s.end).rem_euclid(TAU);
-    let inverse_center_line_angle = (center_line_angle + PI).rem_euclid(TAU);
+    // angle of the line itself
+    let line_angle = angle(s.start, s.end).rem_euclid(TAU);
+    let inverse_center_line_angle = (line_angle + PI).rem_euclid(TAU);
 
-    let outer_line_pos_1 = Pos2 {
-        x: s.start.x + (center_line_angle - FRAC_PI_2).cos() * (0.5 * s.thickness + dist),
-        y: s.start.y + (center_line_angle - FRAC_PI_2).sin() * (0.5 * s.thickness + dist),
+    // offset orthogonal to the line by min_dist
+    let offset = Vec2 {
+        x: (line_angle - FRAC_PI_2).cos() * min_dist,
+        y: (line_angle - FRAC_PI_2).sin() * min_dist,
     };
-    let outer_line_pos_2 = Pos2 {
-        x: s.start.x - (center_line_angle - FRAC_PI_2).cos() * (0.5 * s.thickness + dist),
-        y: s.start.y - (center_line_angle - FRAC_PI_2).sin() * (0.5 * s.thickness + dist),
-    };
+    let offset_line_pos1 = s.start + offset;
+    let offset_line_pos2 = s.start - offset;
 
-    let max_dist = s.end.distance(outer_line_pos_1);
-    if p1_dist > max_dist || p2_dist > max_dist {
+    // distance between `x` and `e`
+    //  x
+    //  |
+    //  s--------------------------e
+    //  if the distance to the start of end is larger than this distance
+    //  there can't be any intersection
+    let max_dist = s.end.distance(offset_line_pos1);
+    if start_dist > max_dist || end_dist > max_dist {
         return false;
     }
 
-    let angle_l1 = angle(outer_line_pos_1, pos).rem_euclid(TAU);
-    let angle_l2 = angle(outer_line_pos_2, pos).rem_euclid(TAU);
-    if center_line_angle < inverse_center_line_angle {
-        if (angle_l1 > center_line_angle && angle_l1 < inverse_center_line_angle)
-            != (angle_l2 > center_line_angle && angle_l2 < inverse_center_line_angle)
+    let offset_line_angle1 = angle(offset_line_pos1, pos).rem_euclid(TAU);
+    let offset_line_angle2 = angle(offset_line_pos2, pos).rem_euclid(TAU);
+    if line_angle < inverse_center_line_angle {
+        // start is smaller than end: non-wrapping range
+        // |====================|
+        //       s-----------e
+        if (offset_line_angle1 > line_angle && offset_line_angle1 < inverse_center_line_angle)
+            != (offset_line_angle2 > line_angle && offset_line_angle2 < inverse_center_line_angle)
         {
             return true;
         }
     } else {
-        if (angle_l1 > center_line_angle || angle_l1 < inverse_center_line_angle)
-            != (angle_l2 > center_line_angle || angle_l2 < inverse_center_line_angle)
+        // start is larger than end: wrapping range
+        // |====================|
+        //  ------e     s-------
+        if (offset_line_angle1 > line_angle || offset_line_angle1 < inverse_center_line_angle)
+            != (offset_line_angle2 > line_angle || offset_line_angle2 < inverse_center_line_angle)
         {
             return true;
         }
@@ -1107,39 +1153,41 @@ fn intersects_straight_trailsection(s: &StraightTrailSection, pos: Pos2, dist: f
     false
 }
 
-fn intersects_arc_trailsection(s: &ArcTrailSection, pos: Pos2, dist: f32) -> bool {
-    let p1_dist = s.start_pos.distance(pos);
-    let p2_dist = s.end_pos().distance(pos);
-    let max_dist = 0.5 * s.thickness + dist;
-    if p1_dist < max_dist || p2_dist < max_dist {
+fn intersects_arc_trailsection(s: &ArcTrailSection, pos: Pos2, extend: f32) -> bool {
+    let start_dist = s.start_pos.distance(pos);
+    let end_dist = s.end_pos().distance(pos);
+    let min_dist = 0.5 * s.thickness + extend;
+    if start_dist < min_dist || end_dist < min_dist {
         return true;
     }
 
-    let min_dist = s.radius - 0.5 * s.thickness - dist;
-    let max_dist = s.radius + 0.5 * s.thickness + dist;
+    let min_center_dist = s.radius - 0.5 * s.thickness - extend;
+    let max_center_dist = s.radius + 0.5 * s.thickness + extend;
     let center_pos = s.center_pos();
-    let arc_center_dist = center_pos.distance(pos);
-    if arc_center_dist < min_dist || arc_center_dist > max_dist {
+    let center_dist = center_pos.distance(pos);
+    if center_dist < min_center_dist || center_dist > max_center_dist {
         return false;
     }
 
-    let arc_start_angle = if s.dir == TurnDirection::Right {
-        s.arc_start_angle().rem_euclid(TAU)
-    } else {
-        s.arc_end_angle().rem_euclid(TAU)
-    };
-    let arc_end_angle = if s.dir == TurnDirection::Right {
-        s.arc_end_angle().rem_euclid(TAU)
-    } else {
-        s.arc_start_angle().rem_euclid(TAU)
+    let arc_start_angle = s.arc_start_angle().rem_euclid(TAU);
+    let arc_end_angle = s.arc_end_angle().rem_euclid(TAU);
+    let (arc_start_angle, arc_end_angle) = match s.dir {
+        TurnDirection::Right => (arc_start_angle, arc_end_angle),
+        TurnDirection::Left => (arc_end_angle, arc_start_angle),
     };
 
     let arc_angle = angle(center_pos, pos).rem_euclid(TAU);
     if arc_start_angle <= arc_end_angle {
+        // start is smaller than end: non-wrapping range
+        // |====================|
+        //       s-----------e
         if arc_angle > arc_start_angle && arc_angle < arc_end_angle {
             return true;
         }
     } else {
+        // start is larger than end: wrapping range
+        // |====================|
+        //  ------e     s-------
         if arc_angle > arc_start_angle || arc_angle < arc_end_angle {
             return true;
         }
