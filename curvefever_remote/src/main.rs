@@ -229,29 +229,18 @@ impl CurvefeverRemoteApp {
 }
 
 fn request_fullscreen() {
-    use wasm_bindgen::prelude::*;
-
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
-    let element = document.document_element().unwrap();
-    element.request_fullscreen().unwrap();
-
-    let delayed = Closure::<dyn FnMut(_)>::new(|_: JsValue| {
-        let window = web_sys::window().unwrap();
-        let screen = window.screen().unwrap();
-        // TODO: is there an api that actually works?
-        let orientation = screen.orientation();
-        _ = orientation
-            .lock(web_sys::OrientationLockType::Landscape)
-            .unwrap();
-    });
-    window
-        .set_timeout_with_callback_and_timeout_and_arguments_0(
-            delayed.as_ref().unchecked_ref(),
-            200,
-        )
-        .unwrap();
-    delayed.forget();
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(document) = window.document() else {
+        return;
+    };
+    let Some(element) = document.document_element() else {
+        return;
+    };
+    if let Err(e) = element.request_fullscreen() {
+        log::error!("Error requresting fullscreen: {e:?}");
+    }
 }
 
 fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
