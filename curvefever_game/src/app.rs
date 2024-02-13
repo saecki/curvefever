@@ -20,6 +20,7 @@ use crate::world::{
 };
 
 pub const PLAYER_MENU_FIELDS: usize = 3;
+const KEY_PLACEHOLDER: &str = "<none>";
 
 pub struct CurvefeverApp {
     bg_thread: Option<std::thread::JoinHandle<()>>,
@@ -351,8 +352,8 @@ impl CurvefeverApp {
         match &mut menu.state {
             MenuState::Home => {
                 for p in world.players.iter_mut() {
-                    let left_down = input.key_down(p.left_key);
-                    let right_down = input.key_down(p.right_key);
+                    let left_down = p.left_key.is_some_and(|k| input.key_down(k));
+                    let right_down = p.right_key.is_some_and(|k| input.key_down(k));
                     p.local_direction = Direction::from_left_right_down(left_down, right_down);
                 }
 
@@ -448,23 +449,23 @@ impl CurvefeverApp {
                             }
                         }
                         1 => {
-                            for e in input.events.iter() {
-                                if let Event::Key {
-                                    key, pressed: true, ..
-                                } = e
-                                {
-                                    world.players[player_menu.player_index].left_key = *key;
-                                }
+                            let last_pressed_key = input.events.iter().rev().find_map(pressed_key);
+                            if let Some(key) = last_pressed_key {
+                                let key = match key {
+                                    Key::Backspace | Key::Delete => None,
+                                    _ => Some(key),
+                                };
+                                world.players[player_menu.player_index].left_key = key;
                             }
                         }
                         2 => {
-                            for e in input.events.iter() {
-                                if let Event::Key {
-                                    key, pressed: true, ..
-                                } = e
-                                {
-                                    world.players[player_menu.player_index].right_key = *key;
-                                }
+                            let last_pressed_key = input.events.iter().rev().find_map(pressed_key);
+                            if let Some(key) = last_pressed_key {
+                                let key = match key {
+                                    Key::Backspace | Key::Delete => None,
+                                    _ => Some(key),
+                                };
+                                world.players[player_menu.player_index].right_key = key;
                             }
                         }
                         _ => (),
@@ -841,13 +842,17 @@ impl CurvefeverApp {
                 (index as f32 + 1.0) * FIELD_SIZE.y,
             );
             let font = FontId::new(0.5 * FIELD_SIZE.y, FontFamily::Proportional);
+            let text_color = match player.left_key {
+                Some(_) => Color32::from_gray(200),
+                None => Color32::from_gray(80),
+            };
             self.text(
                 painter,
                 pos,
                 Align2::CENTER_CENTER,
-                player.left_key.name(),
+                player.left_key.map_or(KEY_PLACEHOLDER, |k| k.name()),
                 font,
-                Color32::from_gray(200),
+                text_color,
             );
 
             //right key
@@ -856,13 +861,17 @@ impl CurvefeverApp {
                 (index as f32 + 1.0) * FIELD_SIZE.y,
             );
             let font = FontId::new(0.5 * FIELD_SIZE.y, FontFamily::Proportional);
+            let text_color = match player.right_key {
+                Some(_) => Color32::from_gray(200),
+                None => Color32::from_gray(80),
+            };
             self.text(
                 painter,
                 pos,
                 Align2::CENTER_CENTER,
-                player.right_key.name(),
+                player.right_key.map_or(KEY_PLACEHOLDER, |k| k.name()),
                 font,
-                Color32::from_gray(200),
+                text_color,
             );
         }
 
@@ -1251,5 +1260,14 @@ fn player_dto(player: &Player) -> curvefever_common::Player {
         id: player.id,
         color: player.color.color32().to_array(),
         name: player.name.clone(),
+    }
+}
+
+fn pressed_key(event: &Event) -> Option<Key> {
+    match event {
+        Event::Key {
+            key, pressed: true, ..
+        } => Some(*key),
+        _ => None,
     }
 }

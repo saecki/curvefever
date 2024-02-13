@@ -64,14 +64,20 @@ impl World {
         let player1 = random_player(
             next_id,
             "Player1".to_string(),
-            Key::ArrowLeft,
-            Key::ArrowRight,
+            Some(Key::ArrowLeft),
+            Some(Key::ArrowRight),
             &players,
         );
         players.push(player1);
         next_id += 1;
 
-        let player2 = random_player(next_id, "Player2".to_string(), Key::A, Key::D, &players);
+        let player2 = random_player(
+            next_id,
+            "Player2".to_string(),
+            Some(Key::A),
+            Some(Key::D),
+            &players,
+        );
         players.push(player2);
         next_id += 1;
 
@@ -250,8 +256,8 @@ pub struct Player {
     pub angle: f32,
     pub color: PlayerColor,
     pub effects: Vec<Effect<PlayerEffect>>,
-    pub left_key: Key,
-    pub right_key: Key,
+    pub left_key: Option<Key>,
+    pub right_key: Option<Key>,
     pub local_direction: Direction,
     pub remote_direction: Direction,
     pub just_crashed: bool,
@@ -266,8 +272,8 @@ impl Player {
         pos: Pos2,
         angle: f32,
         color: PlayerColor,
-        left_key: Key,
-        right_key: Key,
+        left_key: Option<Key>,
+        right_key: Option<Key>,
     ) -> Self {
         Self {
             id,
@@ -882,7 +888,7 @@ impl World {
         }
         let id = self.next_id();
         let name = format!("Player{}", self.players.len() + 1);
-        let player = random_player(id, name, Key::ArrowLeft, Key::ArrowRight, &self.players);
+        let player = random_player(id, name, None, None, &self.players);
         self.players.push(player);
         Some(id)
     }
@@ -966,8 +972,8 @@ fn add_trail_section(player: &mut Player) {
 fn random_player(
     id: u16,
     name: String,
-    left_key: Key,
-    right_key: Key,
+    left_key: Option<Key>,
+    right_key: Option<Key>,
     others: &[Player],
 ) -> Player {
     let mut rng = rand::thread_rng();
