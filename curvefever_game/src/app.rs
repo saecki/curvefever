@@ -9,8 +9,8 @@ use eframe::CreationContext;
 use egui::epaint::{PathShape, RectShape};
 use egui::layers::ShapeIdx;
 use egui::{
-    Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Id, Key, Painter,
-    Pos2, Rect, Rounding, Shape, Stroke, Vec2,
+    Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Id, InputState, Key,
+    Painter, Pos2, Rect, Rounding, Shape, Stroke, Vec2,
 };
 use qrcode::QrCode;
 
@@ -120,119 +120,128 @@ impl PlayerMenu {
     }
 }
 
+fn bg_task(
+    ctx: Context,
+    world: Arc<RwLock<World>>,
+    menu: Arc<RwLock<Menu>>,
+    server_receiver: Receiver<ClientEvent>,
+    game_sender: Sender<GameEvent>,
+) {
+    let mut start = Instant::now();
+    loop {
+        let mut world = world.write().unwrap();
+        if !world.is_running {
+            break;
+        }
+
+        let mut players_invalidated = false;
+        while let Ok(e) = server_receiver.try_recv() {
+            match e {
+                ClientEvent::SyncPlayers => {
+                    players_invalidated = true;
+                }
+                ClientEvent::Input { player_id, dir } => {
+                    if let Some(p) = find_player(&mut world.players, player_id) {
+                        p.remote_direction = dir;
+                    }
+                }
+                ClientEvent::AddPlayer { request_id } => {
+                    if matches!(&world.state, GameState::Stopped(_)) {
+                        let id = world.add_player();
+                        if id.is_some() {
+                            let player = player_dto(world.players.last().unwrap());
+                            let event = GameEvent::PlayerAdded { request_id, player };
+                            game_sender.send_blocking(event).unwrap();
+                            players_invalidated = true;
+                        }
+                    }
+                }
+                ClientEvent::Rename { player_id, name } => {
+                    if let Some(p) = find_player(&mut world.players, player_id) {
+                        p.name = name;
+                        players_invalidated = true;
+                    }
+                }
+                ClientEvent::PrevColor { player_id } => {
+                    if matches!(&world.state, GameState::Stopped(_)) {
+                        if let Some(p) = find_player(&mut world.players, player_id) {
+                            p.color.prev();
+                            players_invalidated = true;
+                        }
+                    }
+                }
+                ClientEvent::NextColor { player_id } => {
+                    if matches!(&world.state, GameState::Stopped(_)) {
+                        if let Some(p) = find_player(&mut world.players, player_id) {
+                            p.color.next();
+                            players_invalidated = true;
+                        }
+                    }
+                }
+                ClientEvent::Restart => {
+                    world.restart();
+                }
+                ClientEvent::Pause => {
+                    world.toggle_pause();
+                }
+                ClientEvent::Share => {
+                    if matches!(&world.state, GameState::Stopped(_)) {
+                        let mut menu = menu.write().unwrap();
+                        if menu.state == MenuState::Share {
+                            menu.state = MenuState::Home;
+                        } else {
+                            menu.state = MenuState::Share;
+                        }
+                    }
+                }
+                ClientEvent::Help => {
+                    if matches!(&world.state, GameState::Stopped(_)) {
+                        let mut menu = menu.write().unwrap();
+                        if menu.state == MenuState::Help {
+                            menu.state = MenuState::Home;
+                        } else {
+                            menu.state = MenuState::Help;
+                        }
+                    }
+                }
+            }
+        }
+
+        if players_invalidated {
+            sync_players(&game_sender, &world.players)
+        }
+
+        world.update();
+        drop(world);
+
+        ctx.request_repaint();
+        let update_time = start.elapsed();
+        if update_time < UPDATE_TIME {
+            let remaining = UPDATE_TIME - update_time;
+            tracing::trace!("fast {}µs", update_time.as_micros());
+            std::thread::sleep(remaining);
+        } else {
+            tracing::warn!("slow {}µs", update_time.as_micros());
+        }
+        start = Instant::now();
+    }
+}
+
 impl CurvefeverApp {
     pub fn new(
         cc: &CreationContext,
         server_receiver: Receiver<ClientEvent>,
         game_sender: Sender<GameEvent>,
     ) -> Self {
-        let ctx = cc.egui_ctx.clone();
         let world = Arc::new(RwLock::new(World::new()));
         let menu = Arc::new(RwLock::new(Menu::default()));
 
+        let bg_ctx = cc.egui_ctx.clone();
         let bg_world = Arc::clone(&world);
         let bg_menu = Arc::clone(&menu);
         let bg_game_sender = game_sender.clone();
         let bg_thread = std::thread::spawn(move || {
-            let mut start = Instant::now();
-            loop {
-                {
-                    let mut world = bg_world.write().unwrap();
-                    if !world.is_running {
-                        break;
-                    }
-
-                    let mut players_invalidated = false;
-                    while let Ok(e) = server_receiver.try_recv() {
-                        match e {
-                            ClientEvent::SyncPlayers => {
-                                players_invalidated = true;
-                            }
-                            ClientEvent::Input { player_id, dir } => {
-                                if let Some(p) = find_player(&mut world.players, player_id) {
-                                    p.remote_direction = dir;
-                                }
-                            }
-                            ClientEvent::AddPlayer { request_id } => {
-                                if matches!(&world.state, GameState::Stopped(_)) {
-                                    let id = world.add_player();
-                                    if id.is_some() {
-                                        let player = player_dto(world.players.last().unwrap());
-                                        let event = GameEvent::PlayerAdded { request_id, player };
-                                        bg_game_sender.send_blocking(event).unwrap();
-                                        players_invalidated = true;
-                                    }
-                                }
-                            }
-                            ClientEvent::Rename { player_id, name } => {
-                                if let Some(p) = find_player(&mut world.players, player_id) {
-                                    p.name = name;
-                                    players_invalidated = true;
-                                }
-                            }
-                            ClientEvent::PrevColor { player_id } => {
-                                if matches!(&world.state, GameState::Stopped(_)) {
-                                    if let Some(p) = find_player(&mut world.players, player_id) {
-                                        p.color.prev();
-                                        players_invalidated = true;
-                                    }
-                                }
-                            }
-                            ClientEvent::NextColor { player_id } => {
-                                if matches!(&world.state, GameState::Stopped(_)) {
-                                    if let Some(p) = find_player(&mut world.players, player_id) {
-                                        p.color.next();
-                                        players_invalidated = true;
-                                    }
-                                }
-                            }
-                            ClientEvent::Restart => {
-                                world.restart();
-                            }
-                            ClientEvent::Pause => {
-                                world.toggle_pause();
-                            }
-                            ClientEvent::Share => {
-                                if matches!(&world.state, GameState::Stopped(_)) {
-                                    let mut menu = bg_menu.write().unwrap();
-                                    if menu.state == MenuState::Share {
-                                        menu.state = MenuState::Home;
-                                    } else {
-                                        menu.state = MenuState::Share;
-                                    }
-                                }
-                            }
-                            ClientEvent::Help => {
-                                if matches!(&world.state, GameState::Stopped(_)) {
-                                    let mut menu = bg_menu.write().unwrap();
-                                    if menu.state == MenuState::Help {
-                                        menu.state = MenuState::Home;
-                                    } else {
-                                        menu.state = MenuState::Help;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    world.update();
-
-                    if players_invalidated {
-                        sync_players(&bg_game_sender, &world.players)
-                    }
-                }
-
-                ctx.request_repaint();
-                let update_time = start.elapsed();
-                if update_time < UPDATE_TIME {
-                    let remaining = UPDATE_TIME - update_time;
-                    tracing::trace!("fast {}µs", update_time.as_micros());
-                    std::thread::sleep(remaining);
-                } else {
-                    tracing::warn!("slow {}µs", update_time.as_micros());
-                }
-                start = Instant::now();
-            }
+            bg_task(bg_ctx, bg_world, bg_menu, server_receiver, bg_game_sender);
         });
 
         let local_ip = local_ip_address::local_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
@@ -253,176 +262,7 @@ impl CurvefeverApp {
 
 impl eframe::App for CurvefeverApp {
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
-        ctx.input(|input| {
-            let mut world = self.world.write().unwrap();
-            let mut menu = self.menu.write().unwrap();
-            match &mut menu.state {
-                MenuState::Home => {
-                    for p in world.players.iter_mut() {
-                        let left_down = input.key_down(p.left_key);
-                        let right_down = input.key_down(p.right_key);
-                        p.local_direction = Direction::from_left_right_down(left_down, right_down);
-                    }
-
-                    if input.key_pressed(Key::Escape) {
-                        world.toggle_pause();
-                    } else if input.key_pressed(Key::Space) {
-                        world.restart();
-                    }
-
-                    if matches!(world.state, GameState::Stopped(_)) {
-                        if input.key_pressed(Key::H) {
-                            menu.state = MenuState::Help;
-                        } else if input.key_pressed(Key::S) {
-                            menu.state = MenuState::Share;
-                        } else if input.key_pressed(Key::P) {
-                            menu.state = MenuState::Player(PlayerMenu::default());
-                        }
-                    }
-                }
-                MenuState::Help => {
-                    if input.key_pressed(Key::Escape) {
-                        menu.state = MenuState::Home;
-                    }
-                }
-                MenuState::Share => {
-                    if input.key_pressed(Key::Escape) {
-                        menu.state = MenuState::Home;
-                    }
-                }
-                MenuState::Player(player_menu) => {
-                    let mut players_invalidated = false;
-
-                    if input.key_pressed(Key::Escape) {
-                        if player_menu.selection_active {
-                            player_menu.selection_active = false;
-                        } else {
-                            menu.state = MenuState::Home;
-                        }
-                    } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
-                        player_menu.selection_active = !player_menu.selection_active;
-                    } else if player_menu.selection_active {
-                        match player_menu.field_index {
-                            0 => {
-                                for e in input.events.iter() {
-                                    if let Event::Key {
-                                        key,
-                                        pressed: true,
-                                        modifiers,
-                                        ..
-                                    } = e
-                                    {
-                                        match key {
-                                            Key::ArrowLeft | Key::ArrowUp => {
-                                                let idx = player_menu.player_index;
-                                                world.players[idx].color.prev();
-                                                players_invalidated = true;
-                                            }
-                                            Key::ArrowRight | Key::ArrowDown => {
-                                                let idx = player_menu.player_index;
-                                                world.players[idx].color.next();
-                                                players_invalidated = true;
-                                            }
-                                            Key::Enter => {
-                                                player_menu.selection_active =
-                                                    !player_menu.selection_active;
-                                            }
-                                            Key::Backspace => {
-                                                world.players[player_menu.player_index].name.pop();
-                                                players_invalidated = true;
-                                            }
-                                            &k if (Key::A as u32..=Key::Z as u32)
-                                                .contains(&(k as u32)) =>
-                                            {
-                                                let char_offset = k as u32 - Key::A as u32;
-                                                let char = if modifiers.shift {
-                                                    'A' as u32 + char_offset
-                                                } else {
-                                                    'a' as u32 + char_offset
-                                                };
-                                                let char = char::from_u32(char).unwrap();
-                                                world.players[player_menu.player_index]
-                                                    .name
-                                                    .push(char);
-                                                players_invalidated = true;
-                                            }
-                                            &k if (Key::Num0 as u32..=Key::Num9 as u32)
-                                                .contains(&(k as u32)) =>
-                                            {
-                                                let char_offset = k as u32 - Key::Num0 as u32;
-                                                let char = '0' as u32 + char_offset;
-                                                let char = char::from_u32(char).unwrap();
-                                                world.players[player_menu.player_index]
-                                                    .name
-                                                    .push(char);
-                                                players_invalidated = true;
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                }
-                            }
-                            1 => {
-                                for e in input.events.iter() {
-                                    if let Event::Key {
-                                        key, pressed: true, ..
-                                    } = e
-                                    {
-                                        world.players[player_menu.player_index].left_key = *key;
-                                    }
-                                }
-                            }
-                            2 => {
-                                for e in input.events.iter() {
-                                    if let Event::Key {
-                                        key, pressed: true, ..
-                                    } = e
-                                    {
-                                        world.players[player_menu.player_index].right_key = *key;
-                                    }
-                                }
-                            }
-                            _ => (),
-                        }
-                    } else {
-                        if input.key_pressed(Key::Equals) {
-                            world.add_player();
-                            players_invalidated = true;
-                        } else if input.key_pressed(Key::Minus) {
-                            world.remove_player(player_menu.player_index);
-                            if player_menu.player_index >= world.players.len() {
-                                player_menu.player_index -= 1;
-                            }
-                            players_invalidated = true;
-                        }
-
-                        if input.key_pressed(Key::ArrowLeft) {
-                            player_menu.selection_left();
-                        } else if input.key_pressed(Key::ArrowRight) {
-                            player_menu.selection_right();
-                        } else if input.key_pressed(Key::ArrowUp) {
-                            player_menu.selection_up(world.players.len());
-                        } else if input.key_pressed(Key::ArrowDown) {
-                            player_menu.selection_down(world.players.len());
-                        }
-
-                        if input.key_pressed(Key::H) {
-                            player_menu.selection_left();
-                        } else if input.key_pressed(Key::L) {
-                            player_menu.selection_right();
-                        } else if input.key_pressed(Key::K) {
-                            player_menu.selection_up(world.players.len());
-                        } else if input.key_pressed(Key::J) {
-                            player_menu.selection_down(world.players.len());
-                        }
-                    }
-
-                    if players_invalidated {
-                        sync_players(&self.game_sender, &world.players);
-                    }
-                }
-            }
-        });
+        ctx.input(|input| self.handle_input(input));
 
         CentralPanel::default()
             .frame(Frame::none().fill(Color32::BLACK))
@@ -505,6 +345,170 @@ impl eframe::App for CurvefeverApp {
 }
 
 impl CurvefeverApp {
+    fn handle_input(&self, input: &InputState) {
+        let mut world = self.world.write().unwrap();
+        let mut menu = self.menu.write().unwrap();
+        match &mut menu.state {
+            MenuState::Home => {
+                for p in world.players.iter_mut() {
+                    let left_down = input.key_down(p.left_key);
+                    let right_down = input.key_down(p.right_key);
+                    p.local_direction = Direction::from_left_right_down(left_down, right_down);
+                }
+
+                if input.key_pressed(Key::Escape) {
+                    world.toggle_pause();
+                } else if input.key_pressed(Key::Space) {
+                    world.restart();
+                }
+
+                if matches!(world.state, GameState::Stopped(_)) {
+                    if input.key_pressed(Key::H) {
+                        menu.state = MenuState::Help;
+                    } else if input.key_pressed(Key::S) {
+                        menu.state = MenuState::Share;
+                    } else if input.key_pressed(Key::P) {
+                        menu.state = MenuState::Player(PlayerMenu::default());
+                    }
+                }
+            }
+            MenuState::Help => {
+                if input.key_pressed(Key::Escape) {
+                    menu.state = MenuState::Home;
+                }
+            }
+            MenuState::Share => {
+                if input.key_pressed(Key::Escape) {
+                    menu.state = MenuState::Home;
+                }
+            }
+            MenuState::Player(player_menu) => {
+                let mut players_invalidated = false;
+
+                if input.key_pressed(Key::Escape) {
+                    if player_menu.selection_active {
+                        player_menu.selection_active = false;
+                    } else {
+                        menu.state = MenuState::Home;
+                    }
+                } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
+                    player_menu.selection_active = !player_menu.selection_active;
+                } else if player_menu.selection_active {
+                    match player_menu.field_index {
+                        0 => {
+                            for e in input.events.iter() {
+                                let Event::Key {
+                                    key,
+                                    pressed: true,
+                                    modifiers,
+                                    ..
+                                } = e
+                                else {
+                                    continue;
+                                };
+
+                                match key {
+                                    Key::ArrowLeft | Key::ArrowUp => {
+                                        let idx = player_menu.player_index;
+                                        world.players[idx].color.prev();
+                                        players_invalidated = true;
+                                    }
+                                    Key::ArrowRight | Key::ArrowDown => {
+                                        let idx = player_menu.player_index;
+                                        world.players[idx].color.next();
+                                        players_invalidated = true;
+                                    }
+                                    Key::Enter => {
+                                        player_menu.selection_active =
+                                            !player_menu.selection_active;
+                                    }
+                                    Key::Backspace => {
+                                        world.players[player_menu.player_index].name.pop();
+                                        players_invalidated = true;
+                                    }
+                                    &k if (Key::A..=Key::Z).contains(&k) => {
+                                        let char_offset = k as u32 - Key::A as u32;
+                                        let char = match modifiers.shift {
+                                            true => 'A' as u32 + char_offset,
+                                            false => 'a' as u32 + char_offset,
+                                        };
+                                        let char = char::from_u32(char).unwrap();
+                                        world.players[player_menu.player_index].name.push(char);
+                                        players_invalidated = true;
+                                    }
+                                    &k if (Key::Num0..=Key::Num9).contains(&k) => {
+                                        let char_offset = k as u32 - Key::Num0 as u32;
+                                        let char = '0' as u32 + char_offset;
+                                        let char = char::from_u32(char).unwrap();
+                                        world.players[player_menu.player_index].name.push(char);
+                                        players_invalidated = true;
+                                    }
+                                    _ => (),
+                                }
+                            }
+                        }
+                        1 => {
+                            for e in input.events.iter() {
+                                if let Event::Key {
+                                    key, pressed: true, ..
+                                } = e
+                                {
+                                    world.players[player_menu.player_index].left_key = *key;
+                                }
+                            }
+                        }
+                        2 => {
+                            for e in input.events.iter() {
+                                if let Event::Key {
+                                    key, pressed: true, ..
+                                } = e
+                                {
+                                    world.players[player_menu.player_index].right_key = *key;
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                } else {
+                    if input.key_pressed(Key::Equals) {
+                        world.add_player();
+                        players_invalidated = true;
+                    } else if input.key_pressed(Key::Minus) {
+                        world.remove_player(player_menu.player_index);
+                        if player_menu.player_index >= world.players.len() {
+                            player_menu.player_index -= 1;
+                        }
+                        players_invalidated = true;
+                    }
+
+                    if input.key_pressed(Key::ArrowLeft) {
+                        player_menu.selection_left();
+                    } else if input.key_pressed(Key::ArrowRight) {
+                        player_menu.selection_right();
+                    } else if input.key_pressed(Key::ArrowUp) {
+                        player_menu.selection_up(world.players.len());
+                    } else if input.key_pressed(Key::ArrowDown) {
+                        player_menu.selection_down(world.players.len());
+                    }
+
+                    if input.key_pressed(Key::H) {
+                        player_menu.selection_left();
+                    } else if input.key_pressed(Key::L) {
+                        player_menu.selection_right();
+                    } else if input.key_pressed(Key::K) {
+                        player_menu.selection_up(world.players.len());
+                    } else if input.key_pressed(Key::J) {
+                        player_menu.selection_down(world.players.len());
+                    }
+                }
+
+                if players_invalidated {
+                    sync_players(&self.game_sender, &world.players);
+                }
+            }
+        }
+    }
+
     fn draw_player(&self, painter: &Painter, player: &Player, world: &RwLockReadGuard<World>) {
         // draw trail
         let mut trail_points = Vec::new();

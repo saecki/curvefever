@@ -656,7 +656,7 @@ impl World {
                         continue;
                     }
 
-                    // check for crash
+                    // wall collisions
                     if wall_teleporting {
                         let p = &mut self.players[pi];
                         if p.pos.x < 0.0 {
@@ -693,6 +693,7 @@ impl World {
                         }
                     }
 
+                    // player collisions
                     if !self.players[pi].gap() {
                         let p = &mut self.players[pi];
                         if intersects_own_trail(p) {
