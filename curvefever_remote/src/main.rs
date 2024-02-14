@@ -298,7 +298,17 @@ fn request_fullscreen() {
         return;
     };
     if let Err(e) = element.request_fullscreen() {
-        log::error!("Error requresting fullscreen: {e:?}");
+        log::error!("Error requesting fullscreen: {e:?}");
+    }
+
+    let Ok(screen) = window.screen() else {
+        return;
+    };
+    let res = screen
+        .orientation()
+        .lock(web_sys::OrientationLockType::Landscape);
+    if let Err(e) = res {
+        log::error!("Error requesting landscape orientation: {e:?}");
     }
 }
 
