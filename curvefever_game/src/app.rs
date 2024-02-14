@@ -19,6 +19,24 @@ use crate::world::{
     ITEM_KINDS, ITEM_RADIUS, PLAYER_COLORS, START_DELAY, UPDATE_TIME, WORLD_SIZE,
 };
 
+macro_rules! key_pressed {
+    ($input:expr, $pat:pat) => {
+        'input: {
+            for e in $input.events.iter() {
+                if let Event::Key {
+                    key: $pat,
+                    pressed: true,
+                    ..
+                } = e
+                {
+                    break 'input true;
+                };
+            }
+            false
+        }
+    };
+}
+
 pub const PLAYER_MENU_FIELDS: usize = 3;
 const KEY_PLACEHOLDER: &str = "<none>";
 
@@ -374,12 +392,12 @@ impl CurvefeverApp {
                 }
             }
             MenuState::Help => {
-                if input.key_pressed(Key::Escape) {
+                if key_pressed!(input, Key::Escape | Key::Q | Key::H) {
                     menu.state = MenuState::Home;
                 }
             }
             MenuState::Share => {
-                if input.key_pressed(Key::Escape) {
+                if key_pressed!(input, Key::Escape | Key::Q | Key::S) {
                     menu.state = MenuState::Home;
                 }
             }
@@ -392,8 +410,35 @@ impl CurvefeverApp {
                     } else {
                         menu.state = MenuState::Home;
                     }
-                } else if input.key_pressed(Key::Space) || input.key_pressed(Key::Enter) {
+                } else if input.key_pressed(Key::Enter) {
                     player_menu.selection_active = !player_menu.selection_active;
+                } else if !player_menu.selection_active && key_pressed!(input, Key::Q | Key::P) {
+                    menu.state = MenuState::Home;
+                } else if !player_menu.selection_active {
+                    if key_pressed!(input, Key::I | Key::A) {
+                        player_menu.selection_active = true;
+                    }
+
+                    if input.key_pressed(Key::Equals) {
+                        world.add_player();
+                        players_invalidated = true;
+                    } else if input.key_pressed(Key::Minus) {
+                        world.remove_player(player_menu.player_index);
+                        if player_menu.player_index >= world.players.len() {
+                            player_menu.player_index -= 1;
+                        }
+                        players_invalidated = true;
+                    }
+
+                    if key_pressed!(input, Key::ArrowLeft | Key::H) {
+                        player_menu.selection_left();
+                    } else if key_pressed!(input, Key::ArrowRight | Key::L) {
+                        player_menu.selection_right();
+                    } else if key_pressed!(input, Key::ArrowUp | Key::K) {
+                        player_menu.selection_up(world.players.len());
+                    } else if key_pressed!(input, Key::ArrowDown | Key::J) {
+                        player_menu.selection_down(world.players.len());
+                    }
                 } else if player_menu.selection_active {
                     match player_menu.field_index {
                         0 => {
@@ -425,6 +470,10 @@ impl CurvefeverApp {
                                     }
                                     Key::Backspace => {
                                         world.players[player_menu.player_index].name.pop();
+                                        players_invalidated = true;
+                                    }
+                                    Key::Space => {
+                                        world.players[player_menu.player_index].name.push(' ');
                                         players_invalidated = true;
                                     }
                                     &k if (Key::A..=Key::Z).contains(&k) => {
@@ -469,37 +518,6 @@ impl CurvefeverApp {
                             }
                         }
                         _ => (),
-                    }
-                } else {
-                    if input.key_pressed(Key::Equals) {
-                        world.add_player();
-                        players_invalidated = true;
-                    } else if input.key_pressed(Key::Minus) {
-                        world.remove_player(player_menu.player_index);
-                        if player_menu.player_index >= world.players.len() {
-                            player_menu.player_index -= 1;
-                        }
-                        players_invalidated = true;
-                    }
-
-                    if input.key_pressed(Key::ArrowLeft) {
-                        player_menu.selection_left();
-                    } else if input.key_pressed(Key::ArrowRight) {
-                        player_menu.selection_right();
-                    } else if input.key_pressed(Key::ArrowUp) {
-                        player_menu.selection_up(world.players.len());
-                    } else if input.key_pressed(Key::ArrowDown) {
-                        player_menu.selection_down(world.players.len());
-                    }
-
-                    if input.key_pressed(Key::H) {
-                        player_menu.selection_left();
-                    } else if input.key_pressed(Key::L) {
-                        player_menu.selection_right();
-                    } else if input.key_pressed(Key::K) {
-                        player_menu.selection_up(world.players.len());
-                    } else if input.key_pressed(Key::J) {
-                        player_menu.selection_down(world.players.len());
                     }
                 }
 
