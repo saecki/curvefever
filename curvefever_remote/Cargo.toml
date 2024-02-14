@@ -34,5 +34,7 @@ features = [
     "ProgressEvent",
     "Screen",
     "ScreenOrientation",
+    "OrientationType",
+    "OrientationLockType",
     "WebSocket",
 ]

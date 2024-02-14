@@ -5,7 +5,7 @@ use egui::{
     Align, Align2, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, Margin, Rect,
     RichText, Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
 };
-use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket};
+use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, OrientationType, WebSocket};
 
 const TEXT_SIZE: f32 = 20.0;
 const BUTTON_SPACE: f32 = 8.0;
@@ -44,6 +44,12 @@ struct CurvefeverRemoteApp {
     players: Vec<Player>,
     client_sender: ClientSender,
     game_receiver: Receiver<GameEvent>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Orientation {
+    Landscape,
+    Portrait,
 }
 
 impl CurvefeverRemoteApp {
@@ -87,163 +93,196 @@ impl eframe::App for CurvefeverRemoteApp {
             }
         }
 
+        let window = web_sys::window().unwrap();
+        let screen = window.screen().unwrap();
+        let orientation = screen.orientation();
+        let orientation = match orientation.type_().unwrap() {
+            OrientationType::PortraitPrimary => Orientation::Portrait,
+            OrientationType::PortraitSecondary => Orientation::Portrait,
+            OrientationType::LandscapePrimary => Orientation::Landscape,
+            OrientationType::LandscapeSecondary => Orientation::Landscape,
+            _ => Orientation::Portrait,
+        };
+
         if let Some(player) = &self.player {
-            let left = self.draw_controls(ctx, player);
+            let left = self.draw_controls(ctx, orientation, player);
             if left {
                 self.player = None;
             }
         } else {
-            self.draw_home(ctx);
+            self.draw_home(ctx, orientation);
         }
     }
 }
 
-impl CurvefeverRemoteApp {
-    fn draw_controls(&self, ctx: &egui::Context, player: &Player) -> bool {
-        let mut back = false;
-        let mut left_down = false;
-        let mut right_down = false;
-        let mut input_event = None;
+#[derive(Debug, Default)]
+struct Actions {
+    back: bool,
+    left_down: bool,
+    right_down: bool,
+    input_event: Option<ClientEvent>,
+}
 
+impl CurvefeverRemoteApp {
+    fn draw_controls(
+        &self,
+        ctx: &egui::Context,
+        orientation: Orientation,
+        player: &Player,
+    ) -> bool {
+        let mut actions = Actions::default();
         if ctx.memory(|m| m.focus().is_none()) {
             ctx.input(|i| {
-                left_down |= i.key_down(Key::ArrowLeft);
-                right_down |= i.key_down(Key::ArrowRight);
+                actions.left_down |= i.key_down(Key::ArrowLeft);
+                actions.right_down |= i.key_down(Key::ArrowRight);
 
                 if i.key_pressed(Key::Space) {
-                    input_event = Some(ClientEvent::Restart);
+                    actions.input_event = Some(ClientEvent::Restart);
                 } else if i.key_pressed(Key::Escape) {
-                    input_event = Some(ClientEvent::Pause);
+                    actions.input_event = Some(ClientEvent::Pause);
                 } else if i.key_pressed(Key::S) {
-                    input_event = Some(ClientEvent::Share);
+                    actions.input_event = Some(ClientEvent::Share);
                 } else if i.key_pressed(Key::H) {
-                    input_event = Some(ClientEvent::Help);
+                    actions.input_event = Some(ClientEvent::Help);
                 }
             });
         }
 
-        CentralPanel::default().show(ctx, |ui| {
-            ui.columns(3, |uis| {
-                left_down |= touch_pad(&mut uis[0], "left");
-
-                {
-                    let ui = &mut uis[1];
-                    ui.vertical_centered(|ui| {
-                        Frame::none()
-                            .outer_margin(Margin::symmetric(0.0, 16.0))
-                            .show(ui, |ui| {
-                                let mut buf = String::from(&player.name);
-                                let resp = TextEdit::singleline(&mut buf)
-                                    .frame(false)
-                                    .horizontal_align(Align::Center)
-                                    .font(FontId::new(1.5 * TEXT_SIZE, FontFamily::Proportional))
-                                    .text_color(player_color(player))
-                                    .show(ui);
-                                if buf != player.name {
-                                    self.client_sender.send(ClientEvent::Rename {
-                                        player_id: player.id,
-                                        name: buf,
-                                    })
-                                }
-
-                                if resp.response.has_focus() {
-                                    ui.input(|i| {
-                                        if i.key_pressed(Key::Enter) {
-                                            resp.response.surrender_focus();
-                                        }
-                                    });
-                                }
-
-                                ui.add_space(2.0 * BUTTON_SPACE);
-
-                                if button(ui, RichText::new("back").size(TEXT_SIZE)) {
-                                    back = true;
-                                }
-                                ui.add_space(BUTTON_SPACE);
-                                if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
-                                    input_event = Some(ClientEvent::Restart);
-                                }
-                                ui.add_space(BUTTON_SPACE);
-                                if button(ui, RichText::new("pause").size(TEXT_SIZE)) {
-                                    input_event = Some(ClientEvent::Pause);
-                                }
-                                ui.add_space(BUTTON_SPACE);
-                                if button(ui, RichText::new("share").size(TEXT_SIZE)) {
-                                    input_event = Some(ClientEvent::Share);
-                                }
-                                ui.add_space(BUTTON_SPACE);
-                                if button(ui, RichText::new("help").size(TEXT_SIZE)) {
-                                    input_event = Some(ClientEvent::Help);
-                                }
-                                ui.add_space(BUTTON_SPACE);
-                                ui.columns(2, |uis| {
-                                    let ui = &mut uis[0];
-                                    if button(ui, RichText::new("prev color").size(TEXT_SIZE)) {
-                                        self.client_sender.send(ClientEvent::PrevColor {
-                                            player_id: player.id,
-                                        });
-                                    }
-                                    let ui = &mut uis[1];
-                                    if button(ui, RichText::new("next color").size(TEXT_SIZE)) {
-                                        self.client_sender.send(ClientEvent::NextColor {
-                                            player_id: player.id,
-                                        });
-                                    }
-                                });
-                            })
-                    });
-                }
-
-                right_down |= touch_pad(&mut uis[2], "right");
-            })
+        CentralPanel::default().show(ctx, |ui| match orientation {
+            Orientation::Landscape => {
+                ui.columns(3, |uis| {
+                    actions.left_down |= touch_pad(&mut uis[0], "left");
+                    self.draw_controls_menu(&mut uis[1], &mut actions, player);
+                    actions.right_down |= touch_pad(&mut uis[2], "right");
+                });
+            }
+            Orientation::Portrait => {
+                self.draw_controls_menu(ui, &mut actions, player);
+                ui.columns(2, |uis| {
+                    actions.left_down |= touch_pad(&mut uis[0], "left");
+                    actions.right_down |= touch_pad(&mut uis[1], "right");
+                });
+            }
         });
 
-        let dir = Direction::from_left_right_down(left_down, right_down);
+        let dir = Direction::from_left_right_down(actions.left_down, actions.right_down);
         self.client_sender.send(ClientEvent::Input {
             player_id: player.id,
             dir,
         });
 
-        if let Some(event) = input_event {
+        if let Some(event) = actions.input_event {
             self.client_sender.send(event);
         }
 
-        back
+        actions.back
     }
 
-    fn draw_home(&mut self, ctx: &egui::Context) {
-        CentralPanel::default().show(ctx, |ui| {
-            ui.columns(3, |uis| {
-                let ui = &mut uis[1];
-                ui.vertical_centered(|ui| {
-                    Frame::none()
-                        .outer_margin(Margin::symmetric(0.0, 16.0))
-                        .show(ui, |ui| {
-                            ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
+    fn draw_controls_menu(&self, ui: &mut egui::Ui, actions: &mut Actions, player: &Player) {
+        ui.vertical_centered(|ui| {
+            Frame::none()
+                .outer_margin(Margin::symmetric(0.0, 16.0))
+                .show(ui, |ui| {
+                    let mut buf = String::from(&player.name);
+                    let resp = TextEdit::singleline(&mut buf)
+                        .frame(false)
+                        .horizontal_align(Align::Center)
+                        .font(FontId::new(1.5 * TEXT_SIZE, FontFamily::Proportional))
+                        .text_color(player_color(player))
+                        .show(ui);
+                    if buf != player.name {
+                        self.client_sender.send(ClientEvent::Rename {
+                            player_id: player.id,
+                            name: buf,
+                        })
+                    }
 
-                            ui.add_space(2.0 * BUTTON_SPACE);
-
-                            if button(ui, RichText::new("add player").size(TEXT_SIZE)) {
-                                let request_id = rand::random();
-                                self.add_request_id = Some(request_id);
-                                self.client_sender
-                                    .send(ClientEvent::AddPlayer { request_id });
+                    if resp.response.has_focus() {
+                        ui.input(|i| {
+                            if i.key_pressed(Key::Enter) {
+                                resp.response.surrender_focus();
                             }
-
-                            ui.add_space(BUTTON_SPACE);
-
-                            ScrollArea::vertical().show(ui, |ui| {
-                                for p in self.players.iter() {
-                                    if button(ui, player_text(p).size(TEXT_SIZE)) {
-                                        self.player = Some(p.clone());
-                                        request_fullscreen();
-                                    }
-                                    ui.add_space(BUTTON_SPACE);
-                                }
-                            })
                         });
+                    }
+
+                    ui.add_space(2.0 * BUTTON_SPACE);
+
+                    if button(ui, RichText::new("back").size(TEXT_SIZE)) {
+                        actions.back = true;
+                    }
+                    ui.add_space(BUTTON_SPACE);
+                    if button(ui, RichText::new("restart").size(TEXT_SIZE)) {
+                        actions.input_event = Some(ClientEvent::Restart);
+                    }
+                    ui.add_space(BUTTON_SPACE);
+                    if button(ui, RichText::new("pause").size(TEXT_SIZE)) {
+                        actions.input_event = Some(ClientEvent::Pause);
+                    }
+                    ui.add_space(BUTTON_SPACE);
+                    if button(ui, RichText::new("share").size(TEXT_SIZE)) {
+                        actions.input_event = Some(ClientEvent::Share);
+                    }
+                    ui.add_space(BUTTON_SPACE);
+                    if button(ui, RichText::new("help").size(TEXT_SIZE)) {
+                        actions.input_event = Some(ClientEvent::Help);
+                    }
+                    ui.add_space(BUTTON_SPACE);
+                    ui.columns(2, |uis| {
+                        let ui = &mut uis[0];
+                        if button(ui, RichText::new("prev color").size(TEXT_SIZE)) {
+                            self.client_sender.send(ClientEvent::PrevColor {
+                                player_id: player.id,
+                            });
+                        }
+                        let ui = &mut uis[1];
+                        if button(ui, RichText::new("next color").size(TEXT_SIZE)) {
+                            self.client_sender.send(ClientEvent::NextColor {
+                                player_id: player.id,
+                            });
+                        }
+                    });
+                })
+        });
+    }
+
+    fn draw_home(&mut self, ctx: &egui::Context, orientation: Orientation) {
+        CentralPanel::default().show(ctx, |ui| match orientation {
+            Orientation::Landscape => ui.columns(3, |uis| {
+                let ui = &mut uis[1];
+                self.draw_home_menu(ui);
+            }),
+            Orientation::Portrait => self.draw_home_menu(ui),
+        });
+    }
+
+    fn draw_home_menu(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            Frame::none()
+                .outer_margin(Margin::symmetric(0.0, 16.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
+
+                    ui.add_space(2.0 * BUTTON_SPACE);
+
+                    if button(ui, RichText::new("add player").size(TEXT_SIZE)) {
+                        let request_id = rand::random();
+                        self.add_request_id = Some(request_id);
+                        self.client_sender
+                            .send(ClientEvent::AddPlayer { request_id });
+                    }
+
+                    ui.add_space(BUTTON_SPACE);
+
+                    ScrollArea::vertical().show(ui, |ui| {
+                        for p in self.players.iter() {
+                            if button(ui, player_text(p).size(TEXT_SIZE)) {
+                                self.player = Some(p.clone());
+                                request_fullscreen();
+                            }
+                            ui.add_space(BUTTON_SPACE);
+                        }
+                    })
                 });
-            });
         });
     }
 }
