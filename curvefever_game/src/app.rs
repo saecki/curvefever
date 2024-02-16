@@ -198,6 +198,8 @@ fn bg_task(
                     }
                 }
                 ClientEvent::Restart => {
+                    let mut menu = menu.write().unwrap();
+                    menu.state = MenuState::Home;
                     world.restart();
                 }
                 ClientEvent::Pause => {
