@@ -840,7 +840,15 @@ impl World {
                         num_alive_players += 1;
                     }
                 }
-                if num_alive_players < 2 {
+                if num_alive_players == 0 {
+                    // the last players all crashed simultaneously
+                    for p in self.players.iter_mut() {
+                        if p.just_crashed {
+                            p.score += 1;
+                        }
+                    }
+                    self.state = GameState::Stopped(start_time);
+                } else if num_alive_players == 1 {
                     for p in self.players.iter_mut() {
                         if !p.crashed {
                             p.score += 1;
