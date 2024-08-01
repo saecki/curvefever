@@ -1,5 +1,5 @@
 [toolchain]
-# https://github.com/rust-lang/rust/issues/120968
-channel = "nightly-2024-02-01"
+# https://github.com/rust-lang/cargo/issues/9406
+channel = "nightly"
 targets = ["wasm32-unknown-unknown"]
 profile = "default"
