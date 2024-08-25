@@ -172,9 +172,13 @@ async fn receiver_task(
     server_sender: Sender<ClientEvent>,
 ) {
     while let Some(Ok(msg)) = socket.next().await {
-        let Message::Binary(data) = msg else {
-            tracing::warn!("Expected binary message: {:?}", msg);
-            continue;
+        let data = match msg {
+            Message::Binary(data) => data,
+            Message::Close(_) => break,
+            Message::Text(_) | Message::Ping(_) | Message::Pong(_) => {
+                tracing::warn!("Expected binary message: {:?}", msg);
+                continue;
+            }
         };
 
         let mut cursor = std::io::Cursor::new(&data);
