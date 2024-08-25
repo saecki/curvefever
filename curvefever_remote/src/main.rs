@@ -29,7 +29,13 @@ fn main() {
             .start(
                 "curvefever_canvas_id",
                 options,
-                Box::new(|c| Box::new(CurvefeverRemoteApp::new(c, client_sender, game_receiver))),
+                Box::new(|c| {
+                    Ok(Box::new(CurvefeverRemoteApp::new(
+                        c,
+                        client_sender,
+                        game_receiver,
+                    )))
+                }),
             )
             .await;
         if let Err(e) = res {
@@ -173,7 +179,7 @@ fn draw_controls(
     player: &mut Player,
 ) -> bool {
     let mut actions = Actions::default();
-    if ctx.memory(|m| m.focus().is_none()) {
+    if ctx.memory(|m| m.focused().is_none()) {
         ctx.input(|i| {
             actions.left_down |= i.key_down(Key::ArrowLeft);
             actions.right_down |= i.key_down(Key::ArrowRight);

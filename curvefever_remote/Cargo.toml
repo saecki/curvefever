@@ -12,16 +12,16 @@ curvefever_common = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true }
 async-channel = { workspace = true }
-log = "0.4.20"
-js-sys = "0.3.68"
-wasm-bindgen = "0.2.91"
+log = "0.4.22"
+js-sys = "0.3.70"
+wasm-bindgen = "0.2.93"
 wasm-bindgen-futures = { version = "0.4", features = ["futures-core"] }
 
 rand = "0.8.5"
-getrandom = { version = "0.2.12", features = ["js"] }
+getrandom = { version = "0.2.15", features = ["js"] }
 
 [dependencies.web-sys]
-version = "0.3.68"
+version = "0.3.70"
 features = [
     "BinaryType",
     "Blob",

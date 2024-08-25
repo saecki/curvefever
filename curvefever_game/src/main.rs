@@ -39,7 +39,7 @@ fn main() {
         let res = eframe::run_native(
             "curvefever",
             options,
-            Box::new(|c| Box::new(CurvefeverApp::new(c, server_receiver, a_game_sender))),
+            Box::new(|c| Ok(Box::new(CurvefeverApp::new(c, server_receiver, a_game_sender)))),
         );
         if let Err(e) = res {
             println!("error running app: {e}");
