@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 use async_channel::{Receiver, Sender};
 use curvefever_common::{ClientEvent, Direction, GameEvent};
 use eframe::CreationContext;
+use egui::emath::GuiRounding;
 use egui::epaint::{PathShape, RectShape};
 use egui::layers::ShapeIdx;
 use egui::{
-    Align2, CentralPanel, Color32, Context, Event, FontFamily, FontId, Frame, Id, InputState, Key,
-    Painter, Pos2, Rect, Rounding, Shape, Stroke, Vec2,
+    Align2, CentralPanel, Color32, Context, CornerRadius, Event, FontFamily, FontId, Frame, Id,
+    InputState, Key, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2,
 };
 use qrcode::QrCode;
 
@@ -66,12 +67,12 @@ impl CurvefeverApp {
     }
 
     #[inline(always)]
-    fn wts_rounding(&self, rounding: Rounding) -> Rounding {
-        Rounding {
-            nw: self.world_to_screen_scale * rounding.nw,
-            ne: self.world_to_screen_scale * rounding.ne,
-            sw: self.world_to_screen_scale * rounding.sw,
-            se: self.world_to_screen_scale * rounding.se,
+    fn wts_rounding(&self, rounding: CornerRadius) -> CornerRadius {
+        CornerRadius {
+            nw: (self.world_to_screen_scale * rounding.nw as f32).round() as u8,
+            ne: (self.world_to_screen_scale * rounding.ne as f32).round() as u8,
+            sw: (self.world_to_screen_scale * rounding.sw as f32).round() as u8,
+            se: (self.world_to_screen_scale * rounding.se as f32).round() as u8,
         }
     }
 
@@ -286,7 +287,7 @@ impl eframe::App for CurvefeverApp {
         ctx.input(|input| self.handle_input(input));
 
         CentralPanel::default()
-            .frame(Frame::none().fill(Color32::BLACK))
+            .frame(Frame::NONE.fill(Color32::BLACK))
             .show(ctx, |ui| {
                 let painter = ui.painter();
 
@@ -305,7 +306,7 @@ impl eframe::App for CurvefeverApp {
                 self.rect_filled(
                     painter,
                     Rect::from_min_size(Pos2::ZERO, WORLD_SIZE),
-                    Rounding::ZERO,
+                    CornerRadius::ZERO,
                     Color32::from_gray(24),
                 );
 
@@ -319,13 +320,18 @@ impl eframe::App for CurvefeverApp {
                 if world.wall_teleporting() {
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
                     let stroke = Stroke::new(2.0, Color32::from_rgb(0, 200, 0));
-                    self.rect_stroke(painter, rect, Rounding::ZERO, stroke);
+                    self.rect_stroke(painter, rect, CornerRadius::ZERO, stroke);
                 }
 
                 if matches!(world.state, GameState::Paused(_) | GameState::Stopped(_)) {
                     // menu background
                     let rect = Rect::from_min_size(Pos2::ZERO, WORLD_SIZE);
-                    self.rect_filled(painter, rect, Rounding::ZERO, Color32::from_black_alpha(80));
+                    self.rect_filled(
+                        painter,
+                        rect,
+                        CornerRadius::ZERO,
+                        Color32::from_black_alpha(80),
+                    );
 
                     let menu = self.menu.read().unwrap();
                     match &menu.state {
@@ -679,7 +685,7 @@ impl CurvefeverApp {
         if let GameState::Stopped(_) = world.state {
             const FONT: FontId = FontId::new(20.0, FontFamily::Proportional);
             const BG_RECT_EXPAND: Vec2 = Vec2::new(6.0, 4.0);
-            let bg_rounding = Rounding::same(6.0);
+            let bg_rounding = CornerRadius::same(6);
             const V_OFFSET: f32 = 40.0;
             const H_OFFSET: f32 = 15.0;
             let text_color = Color32::from_gray(200);
@@ -781,7 +787,7 @@ impl CurvefeverApp {
         // url
         {
             const BG_RECT_EXPAND: Vec2 = Vec2::new(12.0, 8.0);
-            let bg_rounding = Rounding::same(6.0);
+            let bg_rounding = CornerRadius::same(6);
             let bg_color = Color32::from_rgb(0x30, 0x40, 0x80).with_alpha(160);
             let outline_rect_idx = painter.add(Shape::Noop);
             let text_rect = self.text(
@@ -811,7 +817,7 @@ impl CurvefeverApp {
         self.rect_filled(
             painter,
             rect,
-            Rounding::same(2.0 * cell_size.y),
+            CornerRadius::same(2 * cell_size.y as u8),
             Color32::WHITE,
         );
 
@@ -824,7 +830,7 @@ impl CurvefeverApp {
                 let offset = Vec2::new((CODE_PADDING + x) as f32, (CODE_PADDING + y) as f32);
                 let min = qrcode_pos + cell_size * offset;
                 let rect = Rect::from_min_size(min, cell_size);
-                self.pixel_perfect_rect_filled(painter, rect, Rounding::ZERO, Color32::BLACK);
+                self.pixel_perfect_rect_filled(painter, rect, CornerRadius::ZERO, Color32::BLACK);
             }
         }
     }
@@ -915,13 +921,18 @@ impl CurvefeverApp {
         let y = (player_menu.player_index as f32 + 0.5) * FIELD_SIZE.y;
         let rect = Rect::from_min_size(Pos2::new(x, y), selection_size);
         let stroke = Stroke::new(4.0, color);
-        self.rect_stroke(painter, rect, Rounding::same(0.1 * FIELD_SIZE.y), stroke);
+        self.rect_stroke(
+            painter,
+            rect,
+            CornerRadius::same((0.1 * FIELD_SIZE.y).round() as u8),
+            stroke,
+        );
     }
 
     fn draw_hud(&self, painter: &Painter, world: &RwLockReadGuard<World>) {
         const HUD_FONT: FontId = FontId::new(14.0, FontFamily::Proportional);
         const HUD_ALPHA: u8 = 160;
-        let hud_rounding = Rounding::same(8.0);
+        let hud_rounding = CornerRadius::same(8);
         let hud_text_color = Color32::from_gray(160).with_alpha(HUD_ALPHA);
         let hud_effect_bar_color = Color32::from_gray(100).with_alpha(HUD_ALPHA);
         let hud_bg_color = Color32::from_gray(48).with_alpha(HUD_ALPHA);
@@ -1202,12 +1213,29 @@ impl CurvefeverApp {
         painter.line_segment(points, stroke);
     }
 
-    fn rect_stroke(&self, painter: &Painter, rect: Rect, rounding: Rounding, mut stroke: Stroke) {
+    fn rect_stroke(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        rounding: CornerRadius,
+        mut stroke: Stroke,
+    ) {
         stroke.width *= self.world_to_screen_scale;
-        painter.rect_stroke(self.wts_rect(rect), self.wts_rounding(rounding), stroke);
+        painter.rect_stroke(
+            self.wts_rect(rect),
+            self.wts_rounding(rounding),
+            stroke,
+            StrokeKind::Middle,
+        );
     }
 
-    fn rect_filled(&self, painter: &Painter, rect: Rect, rounding: Rounding, fill_color: Color32) {
+    fn rect_filled(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        rounding: CornerRadius,
+        fill_color: Color32,
+    ) {
         painter.rect_filled(self.wts_rect(rect), self.wts_rounding(rounding), fill_color);
     }
 
@@ -1215,15 +1243,13 @@ impl CurvefeverApp {
         &self,
         painter: &Painter,
         rect: Rect,
-        rounding: Rounding,
+        rounding: CornerRadius,
         fill_color: Color32,
     ) {
-        let rect = self.wts_rect(rect);
-        let pixel_perfect_rect = Rect {
-            min: painter.round_pos_to_pixels(rect.min),
-            max: painter.round_pos_to_pixels(rect.max),
-        };
-        painter.rect_filled(pixel_perfect_rect, self.wts_rounding(rounding), fill_color);
+        let rect = self
+            .wts_rect(rect)
+            .round_to_pixels(painter.pixels_per_point());
+        painter.rect_filled(rect, self.wts_rounding(rounding), fill_color);
     }
 
     fn add_path(&self, painter: &Painter, mut path: PathShape) {
@@ -1239,7 +1265,7 @@ impl CurvefeverApp {
         painter: &Painter,
         idx: ShapeIdx,
         rect: Rect,
-        rounding: Rounding,
+        rounding: CornerRadius,
         fill_color: Color32,
         mut stroke: Stroke,
     ) {
@@ -1249,6 +1275,7 @@ impl CurvefeverApp {
             self.wts_rounding(rounding),
             fill_color,
             stroke,
+            StrokeKind::Middle,
         );
         painter.set(idx, Shape::Rect(shape));
     }

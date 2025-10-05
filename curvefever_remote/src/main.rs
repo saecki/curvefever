@@ -2,9 +2,10 @@ use async_channel::{Receiver, Sender};
 use curvefever_common::{ClientEvent, Direction, GameEvent, Player};
 use eframe::CreationContext;
 use egui::{
-    Align, Align2, Button, CentralPanel, Color32, FontFamily, FontId, Frame, Key, Margin, Rect,
-    RichText, Rounding, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
+    Align, Align2, Button, CentralPanel, Color32, CornerRadius, FontFamily, FontId, Frame, Key,
+    Margin, Rect, RichText, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
 };
+use wasm_bindgen::JsCast;
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, OrientationType, WebSocket};
 
 const TEXT_SIZE: f32 = 20.0;
@@ -24,10 +25,16 @@ fn main() {
     let client_sender = start_websocket(&url, game_sender).unwrap();
 
     let options = eframe::WebOptions::default();
-    wasm_bindgen_futures::spawn_local(async {
+    wasm_bindgen_futures::spawn_local(async move {
+        let canvas = document
+            .get_element_by_id("curvefever_canvas_id")
+            .expect("Failed to find canvas")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("element was not a HtmlCanvasElement");
+
         let res = eframe::WebRunner::new()
             .start(
-                "curvefever_canvas_id",
+                canvas,
                 options,
                 Box::new(|c| {
                     Ok(Box::new(CurvefeverRemoteApp::new(
@@ -142,8 +149,8 @@ impl CurvefeverRemoteApp {
 
     fn draw_home_menu(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
-            Frame::none()
-                .outer_margin(Margin::symmetric(0.0, 16.0))
+            Frame::NONE
+                .outer_margin(Margin::symmetric(0, 16))
                 .show(ui, |ui| {
                     ui.label(RichText::new("Players").size(1.5 * TEXT_SIZE));
 
@@ -233,8 +240,8 @@ fn draw_controls_menu(
     player: &mut Player,
 ) {
     ui.vertical_centered(|ui| {
-        Frame::none()
-            .outer_margin(Margin::symmetric(0.0, 16.0))
+        Frame::NONE
+            .outer_margin(Margin::symmetric(0, 16))
             .show(ui, |ui| {
                 let color = player_color(player);
                 let resp = TextEdit::singleline(&mut player.name)
@@ -326,7 +333,7 @@ fn request_fullscreen() {
 
 fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
     let mut down = false;
-    Frame::none().show(ui, |ui| {
+    Frame::NONE.show(ui, |ui| {
         let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
         down |= resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
@@ -336,7 +343,7 @@ fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
         } else {
             Color32::from_gray(0x20)
         };
-        painter.rect_filled(rect, Rounding::same(8.0), bg_fill);
+        painter.rect_filled(rect, CornerRadius::same(8), bg_fill);
 
         let text_color = if down {
             Color32::from_rgb(0x30, 0x60, 0xff)
@@ -352,7 +359,10 @@ fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
 
 fn button(ui: &mut egui::Ui, text: impl Into<WidgetText>) -> bool {
     let button_size = Vec2::new(ui.available_size().x, 2.0 * TEXT_SIZE);
-    let resp = ui.add_sized(button_size, Button::new(text).rounding(Rounding::same(8.0)));
+    let resp = ui.add_sized(
+        button_size,
+        Button::new(text).corner_radius(CornerRadius::same(8)),
+    );
     resp.clicked()
 }
 

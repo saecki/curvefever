@@ -29,7 +29,6 @@ fn main() {
 
         // start game
         let options = NativeOptions {
-            follow_system_theme: true,
             viewport: ViewportBuilder::default().with_maximized(true),
             // fullscreen: true,
             ..Default::default()

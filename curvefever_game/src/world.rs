@@ -294,9 +294,9 @@ impl Player {
     }
 
     pub fn reset(&mut self, pos: Pos2) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         self.pos = pos;
-        self.angle = rng.gen_range(0.0..TAU);
+        self.angle = rng.random_range(0.0..TAU);
         self.effects.clear();
         self.trail.clear();
         self.local_direction = Direction::Straight;
@@ -616,7 +616,7 @@ impl ArcTrailSection {
 
 impl World {
     pub fn update(&mut self) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         self.clock.update(&self.state);
 
         match self.state {
@@ -643,8 +643,8 @@ impl World {
                 // spawn items
                 if self.items.len() < MAX_ITEMS {
                     let weighted_rate = self.clock.frame_delta.as_secs_f32() * ITEM_SPAWN_RATE;
-                    if rng.gen_range(0.0..=1.0) < weighted_rate {
-                        let item_kind_idx = rng.gen_range(0..SUM_OF_ITEM_SPAWN_RATES);
+                    if rng.random_range(0.0..=1.0) < weighted_rate {
+                        let item_kind_idx = rng.random_range(0..SUM_OF_ITEM_SPAWN_RATES);
                         let mut idx = 0;
                         let mut item_kind = None;
                         for k in ITEM_KINDS.iter() {
@@ -673,7 +673,7 @@ impl World {
                     }
 
                     let weighted_range = self.clock.frame_delta.as_secs_f32() * GAP_RATE;
-                    if !p.gap() && !p.no_gap() && rng.gen_range(0.0..=1.0) < weighted_range {
+                    if !p.gap() && !p.no_gap() && rng.random_range(0.0..=1.0) < weighted_range {
                         p.effects.push(gap_effect(&self.clock));
                     }
 
@@ -984,10 +984,10 @@ fn random_player(
     right_key: Option<Key>,
     others: &[Player],
 ) -> Player {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let pos = gen_player_position(others);
-    let angle = rng.gen_range(0.0..TAU);
-    let color_idx = rng.gen_range(0..PLAYER_COLORS.len() - others.len());
+    let angle = rng.random_range(0.0..TAU);
+    let color_idx = rng.random_range(0..PLAYER_COLORS.len() - others.len());
     let color = PLAYER_COLORS
         .iter()
         .filter(|c| others.iter().all(|p| **c != p.color))
@@ -998,13 +998,13 @@ fn random_player(
 }
 
 fn gen_player_position(others: &[Player]) -> Pos2 {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut pos = Pos2::ZERO;
 
     'outer: for _ in 0..1_000_000 {
         pos = Pos2 {
-            x: rng.gen_range(MIN_PLAYER_WALL_DIST..(WORLD_SIZE.x - MIN_PLAYER_WALL_DIST)),
-            y: rng.gen_range(MIN_PLAYER_WALL_DIST..(WORLD_SIZE.y - MIN_PLAYER_WALL_DIST)),
+            x: rng.random_range(MIN_PLAYER_WALL_DIST..(WORLD_SIZE.x - MIN_PLAYER_WALL_DIST)),
+            y: rng.random_range(MIN_PLAYER_WALL_DIST..(WORLD_SIZE.y - MIN_PLAYER_WALL_DIST)),
         };
 
         for o in others.iter() {
@@ -1020,12 +1020,12 @@ fn gen_player_position(others: &[Player]) -> Pos2 {
 }
 
 fn gen_item_position(players: &[Player], items: &[Item]) -> Option<Pos2> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     'outer: for _ in 0..10_000 {
         let pos = Pos2 {
-            x: rng.gen_range(MIN_ITEM_WALL_DIST..(WORLD_SIZE.x - MIN_ITEM_WALL_DIST)),
-            y: rng.gen_range(MIN_ITEM_WALL_DIST..(WORLD_SIZE.y - MIN_ITEM_WALL_DIST)),
+            x: rng.random_range(MIN_ITEM_WALL_DIST..(WORLD_SIZE.x - MIN_ITEM_WALL_DIST)),
+            y: rng.random_range(MIN_ITEM_WALL_DIST..(WORLD_SIZE.y - MIN_ITEM_WALL_DIST)),
         };
 
         for p in players.iter() {
@@ -1220,28 +1220,29 @@ fn angle(a: Pos2, b: Pos2) -> f32 {
 }
 
 fn gap_effect(clock: &Clock) -> Effect<PlayerEffect> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     Effect {
         start: clock.now,
-        duration: GAP_EFFECT_DURATION + rng.gen_range(0..=1) * GAP_EFFECT_DEVIATION_DURATION,
+        duration: GAP_EFFECT_DURATION + rng.random_range(0..=1) * GAP_EFFECT_DEVIATION_DURATION,
         kind: PlayerEffect::Gap,
     }
 }
 
 fn player_effect(clock: &Clock, kind: PlayerEffect) -> Effect<PlayerEffect> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     Effect {
         start: clock.now,
-        duration: PLAYER_EFFECT_DURATION + rng.gen_range(0..=1) * PLAYER_EFFECT_DEVIATION_DURATION,
+        duration: PLAYER_EFFECT_DURATION
+            + rng.random_range(0..=1) * PLAYER_EFFECT_DEVIATION_DURATION,
         kind,
     }
 }
 
 fn world_effect(clock: &Clock, kind: WorldEffect) -> Effect<WorldEffect> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     Effect {
         start: clock.now,
-        duration: WORLD_EFFECT_DURATION + rng.gen_range(0..=1) * WORLD_EFFECT_DEVIATION_DURATION,
+        duration: WORLD_EFFECT_DURATION + rng.random_range(0..=1) * WORLD_EFFECT_DEVIATION_DURATION,
         kind,
     }
 }

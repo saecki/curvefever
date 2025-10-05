@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::http::{header, HeaderValue, Response};
@@ -185,7 +185,7 @@ async fn receiver_task(
         let event = match ClientEvent::decode(&mut cursor) {
             Ok(e) => e,
             Err(e) => {
-                tracing::warn!("Error decoding message `{:?}`:\n{e}", data.as_slice());
+                tracing::warn!("Error decoding message `{:?}`:\n{e}", data);
                 continue;
             }
         };
@@ -215,7 +215,7 @@ async fn sender_task(
 
         let mut buf = Vec::new();
         event.encode(&mut buf).expect("should always succeed");
-        let msg = Message::Binary(buf);
+        let msg = Message::Binary(Bytes::from_owner(buf));
 
         let res = socket.send(msg).await;
         if let Err(e) = res {
