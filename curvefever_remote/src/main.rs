@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use async_channel::{Receiver, Sender};
 use curvefever_common::{ClientEvent, Direction, GameEvent, Player};
 use eframe::CreationContext;
 use egui::{
-    Align, Align2, Button, CentralPanel, Color32, CornerRadius, FontFamily, FontId, Frame, Key,
-    Margin, Rect, RichText, ScrollArea, Sense, TextEdit, Vec2, WidgetText,
+    Align, Align2, Button, CentralPanel, Color32, CornerRadius, FontFamily, FontId, Frame,
+    InputState, Key, Margin, Pos2, Rect, RichText, ScrollArea, Sense, TextEdit, TouchDeviceId,
+    TouchId, Vec2, WidgetText,
 };
 use wasm_bindgen::JsCast;
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, OrientationType, WebSocket};
@@ -53,13 +56,82 @@ fn main() {
 
 struct CurvefeverRemoteApp {
     add_request_id: Option<u64>,
-    player: Option<Player>,
+    player: Option<PlayerState>,
     players: Vec<Player>,
     client_sender: ClientSender,
     game_receiver: Receiver<GameEvent>,
+    multi_touch: MultiTouchState,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
+struct MultiTouchState {
+    touches: HashMap<Touch, TouchState>,
+}
+
+impl MultiTouchState {
+    fn has_any(&self) -> bool {
+        !self.touches.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Touch {
+    device_id: u64,
+    id: u64,
+}
+
+impl Touch {
+    fn new(device_id: TouchDeviceId, id: TouchId) -> Self {
+        Self {
+            device_id: device_id.0,
+            id: id.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TouchState {
+    pos: Pos2,
+}
+
+fn update_multi_touch_state(state: &mut MultiTouchState, input: &InputState) {
+    for event in input.raw.events.iter() {
+        if let egui::Event::Touch {
+            device_id,
+            id,
+            phase,
+            pos,
+            ..
+        } = *event
+        {
+            let touch = Touch::new(device_id, id);
+            match phase {
+                egui::TouchPhase::Start | egui::TouchPhase::Move => {
+                    state.touches.insert(touch, TouchState { pos });
+                }
+                egui::TouchPhase::End | egui::TouchPhase::Cancel => {
+                    state.touches.remove(&touch);
+                }
+            }
+        }
+    }
+}
+
+struct PlayerState {
+    prev_dir: Option<Direction>,
+    player: Player,
+}
+
+impl PlayerState {
+    fn new(player: Player) -> Self {
+        Self {
+            prev_dir: None,
+            player,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Orientation {
     Landscape,
     Portrait,
@@ -77,6 +149,7 @@ impl CurvefeverRemoteApp {
             players: Vec::new(),
             client_sender,
             game_receiver,
+            multi_touch: MultiTouchState::default(),
         }
     }
 }
@@ -85,21 +158,29 @@ impl eframe::App for CurvefeverRemoteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint();
 
+        ctx.input(|input| {
+            update_multi_touch_state(&mut self.multi_touch, input);
+        });
+
         if let Ok(msg) = self.game_receiver.try_recv() {
             match msg {
                 GameEvent::Exit => {
                     self.player = None;
                 }
                 GameEvent::PlayerSync { players } => {
-                    if let Some(current) = &self.player {
+                    if let Some(current) = &mut self.player {
                         // remove or update current player
-                        self.player = players.iter().find(|p| p.id == current.id).cloned();
+                        if let Some(p) = players.iter().find(|p| p.id == current.player.id) {
+                            current.player = p.clone();
+                        } else {
+                            self.player = None;
+                        }
                     }
                     self.players = players;
                 }
                 GameEvent::PlayerAdded { request_id, player } => {
                     if self.add_request_id == Some(request_id) {
-                        self.player = Some(player);
+                        self.player = Some(PlayerState::new(player));
                         request_fullscreen();
                     }
                 }
@@ -118,7 +199,13 @@ impl eframe::App for CurvefeverRemoteApp {
         };
 
         if let Some(player) = &mut self.player {
-            let left = draw_controls(ctx, orientation, &self.client_sender, player);
+            let left = draw_controls(
+                ctx,
+                orientation,
+                &self.multi_touch,
+                &self.client_sender,
+                player,
+            );
             if left {
                 self.player = None;
             }
@@ -168,7 +255,7 @@ impl CurvefeverRemoteApp {
                     ScrollArea::vertical().show(ui, |ui| {
                         for p in self.players.iter() {
                             if button(ui, player_text(p).size(TEXT_SIZE)) {
-                                self.player = Some(p.clone());
+                                self.player = Some(PlayerState::new(p.clone()));
                                 request_fullscreen();
                             }
                             ui.add_space(BUTTON_SPACE);
@@ -182,8 +269,9 @@ impl CurvefeverRemoteApp {
 fn draw_controls(
     ctx: &egui::Context,
     orientation: Orientation,
+    multi_touch: &MultiTouchState,
     client_sender: &ClientSender,
-    player: &mut Player,
+    player: &mut PlayerState,
 ) -> bool {
     let mut actions = Actions::default();
     if ctx.memory(|m| m.focused().is_none()) {
@@ -206,25 +294,28 @@ fn draw_controls(
     CentralPanel::default().show(ctx, |ui| match orientation {
         Orientation::Landscape => {
             ui.columns(3, |uis| {
-                actions.left_down |= touch_pad(&mut uis[0], "left");
-                draw_controls_menu(&mut uis[1], client_sender, &mut actions, player);
-                actions.right_down |= touch_pad(&mut uis[2], "right");
+                actions.left_down |= touch_pad(&mut uis[0], multi_touch, "left");
+                draw_controls_menu(&mut uis[1], client_sender, &mut actions, &mut player.player);
+                actions.right_down |= touch_pad(&mut uis[2], multi_touch, "right");
             });
         }
         Orientation::Portrait => {
-            draw_controls_menu(ui, client_sender, &mut actions, player);
+            draw_controls_menu(ui, client_sender, &mut actions, &mut player.player);
             ui.columns(2, |uis| {
-                actions.left_down |= touch_pad(&mut uis[0], "left");
-                actions.right_down |= touch_pad(&mut uis[1], "right");
+                actions.left_down |= touch_pad(&mut uis[0], multi_touch, "left");
+                actions.right_down |= touch_pad(&mut uis[1], multi_touch, "right");
             });
         }
     });
 
     let dir = Direction::from_left_right_down(actions.left_down, actions.right_down);
-    client_sender.send(ClientEvent::Input {
-        player_id: player.id,
-        dir,
-    });
+    if player.prev_dir != Some(dir) {
+        client_sender.send(ClientEvent::Input {
+            player_id: player.player.id,
+            dir,
+        });
+    }
+    player.prev_dir = Some(dir);
 
     if let Some(event) = actions.input_event {
         client_sender.send(event);
@@ -243,7 +334,7 @@ fn draw_controls_menu(
         Frame::NONE
             .outer_margin(Margin::symmetric(0, 16))
             .show(ui, |ui| {
-                let color = player_color(player);
+                let color = player_color(&player);
                 let resp = TextEdit::singleline(&mut player.name)
                     .frame(false)
                     .horizontal_align(Align::Center)
@@ -251,7 +342,7 @@ fn draw_controls_menu(
                     .text_color(color)
                     .show(ui);
                 if resp.response.changed() {
-                    println!("changed: {}", player.name);
+                    log::debug!("changed: {}", player.name);
                     client_sender.send(ClientEvent::Rename {
                         player_id: player.id,
                         name: player.name.clone(),
@@ -331,12 +422,17 @@ fn request_fullscreen() {
     }
 }
 
-fn touch_pad(ui: &mut egui::Ui, name: &str) -> bool {
+fn touch_pad(ui: &mut egui::Ui, multi_touch: &MultiTouchState, name: &str) -> bool {
     let mut down = false;
     Frame::NONE.show(ui, |ui| {
         let rect = Rect::from_min_size(ui.cursor().min, ui.available_size());
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
-        down |= resp.contains_pointer() && ui.input(|i| i.pointer.primary_down());
+
+        down |= if multi_touch.has_any() {
+            multi_touch.touches.values().any(|t| rect.contains(t.pos))
+        } else {
+            resp.contains_pointer() && ui.input(|i| i.pointer.primary_down())
+        };
 
         let bg_fill = if down {
             Color32::from_rgba_unmultiplied(0x30, 0x50, 0xc0, 0x10)
